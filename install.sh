@@ -71,7 +71,9 @@ fi
 
 log_info "Downloading ${SCRIPT_NAME} from ${SCRIPT_URL}..."
 temp_script=$(mktemp)
-if ! curl -fsSL --connect-timeout 10 "$SCRIPT_URL" -o "$temp_script"; then
+# Add timestamp to prevent caching issues
+script_url_with_timestamp="${SCRIPT_URL}?$(date +%s)"
+if ! curl -fsSL --connect-timeout 10 "$script_url_with_timestamp" -o "$temp_script"; then
     log_error "Failed to download the script. Check the URL and network connection."
     rm -f "$temp_script"
     exit 1
@@ -112,4 +114,3 @@ log_info "You can now run the script using: ${SCRIPT_NAME}"
 log_info "Run '${SCRIPT_NAME} --help' to see usage instructions."
 
 exit 0
-
