@@ -72,44 +72,60 @@ fi
 log_info "Downloading ${SCRIPT_NAME} from ${SCRIPT_URL}..."
 temp_script=$(mktemp)
 
-# Enhanced cache-busting parameters
+# Enhanced cache-busting parameters (simplified for GitHub compatibility)
 timestamp="$(date +%s)"
-nanoseconds="$(date +%N 2>/dev/null || echo "$RANDOM$RANDOM")"  # Fallback for systems without nanoseconds
 random_suffix="$RANDOM"
-pid="$$"
-uuid_like="${timestamp:0:8}-${random_suffix}-${pid}-${nanoseconds:0:8}"
 
-# Build URL with multiple cache-busting parameters
-script_url_with_cache_bust="${SCRIPT_URL}?cb=${timestamp}&r=${random_suffix}&uuid=${uuid_like}&nocache=1&_=${timestamp}${nanoseconds}"
+# Build URL with simple cache-busting parameters
+script_url_with_cache_bust="${SCRIPT_URL}?t=${timestamp}&r=${random_suffix}"
 
-log_info "Using cache-busted URL: ${SCRIPT_URL}?cb=${timestamp}&..."
+log_info "Using cache-busted URL: ${script_url_with_cache_bust}"
 
-# Use aggressive cache-busting headers and options
+# First, let's try downloading and see what we get
+log_info "Attempting download with cache-busting..."
 if ! curl -fsSL --connect-timeout 30 --max-time 120 \
-    -H "Cache-Control: no-cache, no-store, must-revalidate, max-age=0" \
+    -H "Cache-Control: no-cache" \
     -H "Pragma: no-cache" \
-    -H "Expires: 0" \
-    -H "If-Modified-Since: Mon, 26 Jul 1997 05:00:00 GMT" \
-    -H "If-None-Match: *" \
-    -H "User-Agent: n8n-installer-$(date +%s)" \
-    --no-keepalive \
     "$script_url_with_cache_bust" -o "$temp_script"; then
-    log_error "Failed to download the script. Check the URL and network connection."
-    rm -f "$temp_script"
-    exit 1
+    log_error "Failed to download with cache-busting. Trying without cache parameters..."
+    # Fallback: try without cache-busting parameters
+    if ! curl -fsSL --connect-timeout 30 --max-time 120 \
+        -H "Cache-Control: no-cache" \
+        -H "Pragma: no-cache" \
+        "$SCRIPT_URL" -o "$temp_script"; then
+        log_error "Failed to download the script. Check the URL and network connection."
+        rm -f "$temp_script"
+        exit 1
+    fi
+    log_info "Downloaded successfully using fallback method."
 fi
 log_success "Script downloaded successfully."
 
 # Verify the downloaded file is not empty and contains expected content
+file_size=$(stat -c%s "$temp_script" 2>/dev/null || wc -c < "$temp_script")
+log_info "Downloaded file size: ${file_size} bytes"
+
 if [[ ! -s "$temp_script" ]]; then
     log_error "Downloaded script is empty."
+    log_info "Attempted URL: ${script_url_with_cache_bust}"
+    log_info "Fallback URL: ${SCRIPT_URL}"
+    log_info "Debugging: Let's check what we actually downloaded..."
+    if [[ -f "$temp_script" ]]; then
+        log_info "File exists but is empty. Content:"
+        cat "$temp_script" || echo "(no content or binary)"
+    fi
     rm -f "$temp_script"
     exit 1
 fi
 
 # Basic validation - check if it looks like a shell script
-if ! head -n 1 "$temp_script" | grep -q "^#!/"; then
+first_line=$(head -n 1 "$temp_script" 2>/dev/null || echo "")
+log_info "First line of downloaded script: ${first_line}"
+
+if ! echo "$first_line" | grep -q "^#!/"; then
     log_error "Downloaded file doesn't appear to be a valid shell script."
+    log_info "First few lines of the file:"
+    head -n 5 "$temp_script" 2>/dev/null || echo "(unable to read file)"
     rm -f "$temp_script"
     exit 1
 fi
