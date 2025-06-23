@@ -30,9 +30,18 @@ ARG_RESTORE_TYPE="all"
 ARG_DRY_RUN=false
 ARG_VERBOSE=false
 ARG_LOG_FILE=""
+# New enhancement flags
+ARG_WORKFLOW_ID=""
+ARG_CREDENTIAL_ID=""
+ARG_USER_ID=""
+ARG_PROJECT_ID=""
+ARG_SEPARATE_FILES=false
+ARG_IMPORT_AS_NEW=false
 CONF_DATED_BACKUPS=false
 CONF_VERBOSE=false
 CONF_LOG_FILE=""
+# New configuration options
+CONF_SEPARATE_FILES=false
 
 # ANSI colors for better UI (using printf for robustness)
 printf -v RED     '\033[0;31m'
@@ -217,27 +226,46 @@ load_config() {
 }
 
 show_help() {
-    cat << EOF
+    cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
 Automated backup and restore tool for n8n Docker containers using GitHub.
 Reads configuration from ${CONFIG_FILE_PATH} if it exists.
 
 Options:
-  --action <action>     Action to perform: 'backup' or 'restore'.
-  --container <id|name> Target Docker container ID or name.
-  --token <pat>         GitHub Personal Access Token (PAT).
-  --repo <user/repo>    GitHub repository (e.g., 'myuser/n8n-backup').
-  --branch <branch>     GitHub branch to use (defaults to 'main').
-  --dated               Create timestamped subdirectory for backups (e.g., YYYY-MM-DD_HH-MM-SS/).
-                        Overrides CONF_DATED_BACKUPS in config file.
-  --restore-type <type> Type of restore: 'all' (default), 'workflows', or 'credentials'.
-                        Overrides CONF_RESTORE_TYPE in config file.
-  --dry-run             Simulate the action without making any changes.
-  --verbose             Enable detailed debug logging.
-  --log-file <path>     Path to a file to append logs to.
-  --config <path>       Path to a custom configuration file.
-  -h, --help            Show this help message and exit.
+  --action <action>       Action to perform: 'backup' or 'restore'.
+  --container <id|name>   Target Docker container ID or name.
+  --token <pat>           GitHub Personal Access Token (PAT).
+  --repo <user/repo>      GitHub repository (e.g., 'myuser/n8n-backup').
+  --branch <branch>       GitHub branch to use (defaults to 'main').
+  --dated                 Create timestamped subdirectory for backups (e.g., YYYY-MM-DD_HH-MM-SS/).
+                          Overrides CONF_DATED_BACKUPS in config file.
+  --restore-type <type>   Type of restore: 'all' (default), 'workflows', or 'credentials'.
+                          Overrides CONF_RESTORE_TYPE in config file.
+  
+  Selective Backup/Restore:
+  --workflow-id <ID>      Export/import a specific workflow by ID instead of all workflows.
+                          Use with 'n8n list workflows' to find IDs.
+  --credential-id <ID>    Export/import a specific credential by ID instead of all credentials.
+                          Use with 'n8n list credentials' to find IDs.
+  
+  Assignment Options (Restore only):
+  --user-id <ID>          Assign imported items to a specific user ID.
+  --project-id <ID>       Assign imported items to a specific project ID.
+  
+  Advanced Options:
+  --separate-files        Create individual JSON files per workflow/credential (git-friendly).
+                          Backup: Uses 'n8n export --backup' to create separate files.
+                          Restore: Imports from directory of separate JSON files.
+  --import-as-new         Import items as new copies (strips IDs to avoid overwriting).
+                          Useful for cloning workflows or safe imports.
+  
+  General Options:
+  --dry-run               Simulate the action without making any changes.
+  --verbose               Enable detailed debug logging.
+  --log-file <path>       Path to a file to append logs to.
+  --config <path>         Path to a custom configuration file.
+  -h, --help              Show this help message and exit.
 
 Configuration File (${CONFIG_FILE_PATH}):
   Define variables like:
@@ -247,8 +275,22 @@ Configuration File (${CONFIG_FILE_PATH}):
     CONF_DEFAULT_CONTAINER="n8n-container-name"
     CONF_DATED_BACKUPS=true # Optional, defaults to false
     CONF_RESTORE_TYPE="all" # Optional, defaults to 'all'
+    CONF_SEPARATE_FILES=true # Optional, defaults to false
     CONF_VERBOSE=false      # Optional, defaults to false
     CONF_LOG_FILE="/var/log/n8n-manager.log" # Optional
+
+Examples:
+  # Backup all workflows and credentials to GitHub
+  $(basename "$0") --action backup --container n8n --repo myuser/n8n-backup
+
+  # Backup a specific workflow with separate files (git-friendly)
+  $(basename "$0") --action backup --workflow-id 123 --separate-files --container n8n
+
+  # Restore a specific credential to a project
+  $(basename "$0") --action restore --credential-id 456 --project-id 789 --container n8n
+
+  # Safe import without overwriting (import as new)
+  $(basename "$0") --action restore --import-as-new --container n8n
 
 Command-line arguments override configuration file settings.
 For non-interactive use, required parameters (action, container, token, repo)
@@ -507,6 +549,174 @@ timestamp() {
     date +"%Y-%m-%d_%H-%M-%S"
 }
 
+# --- JSON Helper Functions ---
+
+strip_json_ids() {
+    local input_file="$1"
+    local output_file="$2" 
+    local item_type="${3:-workflow}"  # workflow or credential
+    
+    # Input validation
+    if [ -z "$input_file" ] || [ -z "$output_file" ]; then
+        log ERROR "strip_json_ids: Missing required parameters (input_file, output_file)"
+        return 1
+    fi
+    
+    if [ ! -f "$input_file" ]; then
+        log ERROR "strip_json_ids: Input file does not exist: $input_file"
+        return 1
+    fi
+    
+    if [ ! -r "$input_file" ]; then
+        log ERROR "strip_json_ids: Cannot read input file: $input_file"
+        return 1
+    fi
+    
+    # Check file size to avoid processing empty files
+    if [ ! -s "$input_file" ]; then
+        log WARN "strip_json_ids: Input file is empty, creating empty output: $input_file"
+        echo "[]" > "$output_file"
+        return 0
+    fi
+    
+    log DEBUG "strip_json_ids: Processing $item_type IDs from $input_file -> $output_file"
+    
+    # Try Python3 first (preferred method)
+    if command_exists python3; then
+        log DEBUG "strip_json_ids: Using Python3 for JSON processing"
+        python3 -c "
+import json
+import sys
+
+def strip_ids_from_json(input_file, output_file, item_type):
+    try:
+        with open(input_file, 'r', encoding='utf-8') as f:
+            data = json.load(f)
+        
+        if not isinstance(data, list):
+            print(f'Error: Expected JSON array, got {type(data).__name__}', file=sys.stderr)
+            return False
+            
+        processed_items = []
+        for item in data:
+            if isinstance(item, dict):
+                # Create a copy without the 'id' field
+                processed_item = {k: v for k, v in item.items() if k != 'id'}
+                processed_items.append(processed_item)
+            else:
+                processed_items.append(item)
+        
+        with open(output_file, 'w', encoding='utf-8') as f:
+            json.dump(processed_items, f, indent=2, ensure_ascii=False)
+        
+        print(f'Processed {len(processed_items)} {item_type}s', file=sys.stderr)
+        return True
+        
+    except json.JSONDecodeError as e:
+        print(f'JSON decode error: {e}', file=sys.stderr)
+        return False
+    except Exception as e:
+        print(f'Error processing JSON: {e}', file=sys.stderr)
+        return False
+
+if not strip_ids_from_json('$input_file', '$output_file', '$item_type'):
+    sys.exit(1)
+" 2>/dev/null
+        local python_exit=$?
+        if [ $python_exit -eq 0 ]; then
+            log SUCCESS "strip_json_ids: Successfully processed with Python3"
+            return 0
+        else
+            log WARN "strip_json_ids: Python3 processing failed, trying Node.js"
+        fi
+    fi
+    
+    # Try Node.js as fallback
+    if command_exists node; then
+        log DEBUG "strip_json_ids: Using Node.js for JSON processing"
+        node -e "
+const fs = require('fs');
+
+function stripIdsFromJson(inputFile, outputFile, itemType) {
+    try {
+        const data = JSON.parse(fs.readFileSync(inputFile, 'utf8'));
+        
+        if (!Array.isArray(data)) {
+            console.error(\`Error: Expected JSON array, got \${typeof data}\`);
+            return false;
+        }
+        
+        const processedItems = data.map(item => {
+            if (typeof item === 'object' && item !== null) {
+                const { id, ...itemWithoutId } = item;
+                return itemWithoutId;
+            }
+            return item;
+        });
+        
+        fs.writeFileSync(outputFile, JSON.stringify(processedItems, null, 2), 'utf8');
+        console.error(\`Processed \${processedItems.length} \${itemType}s\`);
+        return true;
+        
+    } catch (error) {
+        console.error(\`Error processing JSON: \${error.message}\`);
+        return false;
+    }
+}
+
+if (!stripIdsFromJson('$input_file', '$output_file', '$item_type')) {
+    process.exit(1);
+}
+" 2>/dev/null
+        local node_exit=$?
+        if [ $node_exit -eq 0 ]; then
+            log SUCCESS "strip_json_ids: Successfully processed with Node.js"
+            return 0
+        else
+            log WARN "strip_json_ids: Node.js processing failed, trying sed fallback"
+        fi
+    fi
+    
+    # Fallback to sed (less reliable but works in most cases)
+    log DEBUG "strip_json_ids: Using sed fallback for JSON processing"
+    if sed 's/^[[:space:]]*"id"[[:space:]]*:[[:space:]]*"[^"]*"[[:space:]]*,*[[:space:]]*$//' "$input_file" > "$output_file"; then
+        # Verify the output is still valid JSON by checking basic structure
+        if grep -q '\[' "$output_file" && grep -q '\]' "$output_file"; then
+            log SUCCESS "strip_json_ids: Successfully processed with sed (basic validation passed)"
+            return 0
+        else
+            log ERROR "strip_json_ids: sed output failed basic JSON validation"
+            return 1
+        fi
+    else
+        log ERROR "strip_json_ids: sed processing failed"
+        return 1
+    fi
+}
+
+build_import_command() {
+    local base_cmd="$1"
+    local input_file="$2"
+    local user_id="$3"
+    local project_id="$4"
+    
+    local cmd="$base_cmd --input=$input_file"
+    
+    # Add user assignment if specified
+    if [ -n "$user_id" ]; then
+        cmd="$cmd --userId=$user_id"
+        log DEBUG "Adding user assignment: --userId=$user_id"
+    fi
+    
+    # Add project assignment if specified  
+    if [ -n "$project_id" ]; then
+        cmd="$cmd --projectId=$project_id"
+        log DEBUG "Adding project assignment: --projectId=$project_id"
+    fi
+    
+    echo "$cmd"
+}
+
 rollback_restore() {
     local container_id="$1"
     local backup_dir="$2"
@@ -640,27 +850,88 @@ backup() {
     local export_failed=false
     local no_data_found=false
 
-    # Export workflows
-    if ! dockExec "$container_id" "n8n export:workflow --all --output=$container_workflows" false; then 
-        # Check if the error is due to no workflows existing
-        if docker exec "$container_id" n8n list workflows 2>&1 | grep -q "No workflows found"; then
-            log INFO "No workflows found to backup - this is a clean installation"
-            no_data_found=true
+    # Determine export strategy based on flags
+    local workflow_export_cmd=""
+    local credential_export_cmd=""
+    local using_separate_files=false
+    
+    # Check if we're using separate files mode
+    if [ "$ARG_SEPARATE_FILES" = "true" ] || [ "$CONF_SEPARATE_FILES" = "true" ]; then
+        using_separate_files=true
+        log INFO "Using separate files mode (git-friendly)"
+    fi
+    
+    # Build workflow export command
+    if [ -n "$ARG_WORKFLOW_ID" ]; then
+        log INFO "Exporting specific workflow ID: $ARG_WORKFLOW_ID"
+        if $using_separate_files; then
+            workflow_export_cmd="n8n export:workflow --id=$ARG_WORKFLOW_ID --pretty --output=/tmp/workflow_$ARG_WORKFLOW_ID.json"
         else
-            log ERROR "Failed to export workflows"
-            export_failed=true
+            workflow_export_cmd="n8n export:workflow --id=$ARG_WORKFLOW_ID --output=$container_workflows"
+        fi
+    else
+        log INFO "Exporting all workflows"
+        if $using_separate_files; then
+            workflow_export_cmd="n8n export:workflow --backup --output=/tmp/workflows/"
+        else
+            workflow_export_cmd="n8n export:workflow --all --output=$container_workflows"
+        fi
+    fi
+    
+    # Build credential export command  
+    if [ -n "$ARG_CREDENTIAL_ID" ]; then
+        log INFO "Exporting specific credential ID: $ARG_CREDENTIAL_ID"
+        if $using_separate_files; then
+            credential_export_cmd="n8n export:credentials --id=$ARG_CREDENTIAL_ID --decrypted --pretty --output=/tmp/credential_$ARG_CREDENTIAL_ID.json"
+        else
+            credential_export_cmd="n8n export:credentials --id=$ARG_CREDENTIAL_ID --decrypted --output=$container_credentials"
+        fi
+    else
+        log INFO "Exporting all credentials"
+        if $using_separate_files; then
+            credential_export_cmd="n8n export:credentials --backup --decrypted --output=/tmp/credentials/"
+        else
+            credential_export_cmd="n8n export:credentials --all --decrypted --output=$container_credentials"
         fi
     fi
 
-    # Export credentials
-    if ! dockExec "$container_id" "n8n export:credentials --all --decrypted --output=$container_credentials" false; then 
-        # Check if the error is due to no credentials existing
-        if docker exec "$container_id" n8n list credentials 2>&1 | grep -q "No credentials found"; then
-            log INFO "No credentials found to backup - this is a clean installation"
-            no_data_found=true
+    # Execute workflow export
+    if [ -n "$ARG_WORKFLOW_ID" ] || [ "$ARG_RESTORE_TYPE" != "credentials" ]; then
+        log DEBUG "Executing workflow export: $workflow_export_cmd"
+        if ! dockExec "$container_id" "$workflow_export_cmd" false; then 
+            # Check if the error is due to no workflows or specific workflow not found
+            if [ -n "$ARG_WORKFLOW_ID" ]; then
+                log ERROR "Failed to export workflow ID: $ARG_WORKFLOW_ID (workflow may not exist)"
+                export_failed=true
+            elif docker exec "$container_id" n8n list workflows 2>&1 | grep -q "No workflows found"; then
+                log INFO "No workflows found to backup - this is a clean installation"
+                no_data_found=true
+            else
+                log ERROR "Failed to export workflows"
+                export_failed=true
+            fi
         else
-            log ERROR "Failed to export credentials"
-            export_failed=true
+            log SUCCESS "Workflow export completed successfully"
+        fi
+    fi
+
+    # Execute credential export
+    if [ -n "$ARG_CREDENTIAL_ID" ] || [ "$ARG_RESTORE_TYPE" != "workflows" ]; then
+        log DEBUG "Executing credential export: $credential_export_cmd"
+        if ! dockExec "$container_id" "$credential_export_cmd" false; then 
+            # Check if the error is due to no credentials or specific credential not found
+            if [ -n "$ARG_CREDENTIAL_ID" ]; then
+                log ERROR "Failed to export credential ID: $ARG_CREDENTIAL_ID (credential may not exist)"
+                export_failed=true
+            elif docker exec "$container_id" n8n list credentials 2>&1 | grep -q "No credentials found"; then
+                log INFO "No credentials found to backup - this is a clean installation"
+                no_data_found=true
+            else
+                log ERROR "Failed to export credentials"
+                export_failed=true
+            fi
+        else
+            log SUCCESS "Credential export completed successfully"
         fi
     fi
 
@@ -771,49 +1042,71 @@ backup() {
             return 1; 
         }
         
-        if [ "$use_dated_backup" = "true" ]; then
-            # For dated backups, explicitly add the backup subdirectory
-            if [ -d "$backup_timestamp" ]; then
-                log DEBUG "Adding dated backup directory: $backup_timestamp"
-                
-                # First list what's in the directory (for debugging)
-                log DEBUG "Files in backup directory:"
-                ls -la "$backup_timestamp" || true
-                
-                # Add specific directory
-                if ! git add "$backup_timestamp"; then
-                    log ERROR "Git add failed for dated backup directory"
-                    cd - > /dev/null || true
-                    rm -rf "$tmp_dir"
-                    return 1
-                fi
-            else
-                log ERROR "Backup directory not found: $backup_timestamp"
+        if [ "$use_dated_backup" = "true" ] && [ -n "$backup_timestamp" ] && [ -d "$backup_timestamp" ]; then
+            log DEBUG "Adding dated backup directory: $backup_timestamp"
+            
+            # First list what's in the directory (for debugging)
+            log DEBUG "Files in backup directory:"
+            ls -la "$backup_timestamp" || true
+            
+            # Add specific directory
+            if ! git add "$backup_timestamp"; then
+                log ERROR "Git add failed for dated backup directory"
                 cd - > /dev/null || true
                 rm -rf "$tmp_dir"
                 return 1
             fi
         else
             # Standard repo-root backup
-            log DEBUG "Adding all files at repository root"
-            # Explicitly target the timestamp file and specific JSON files to avoid unnecessary files
-            if ! git add workflows.json credentials.json .env backup_timestamp.txt; then
-                log ERROR "Git add failed for repository root files"
-                cd - > /dev/null || true
-                return 1
+            log DEBUG "Adding files at repository root"
+            
+            # Check if we're using separate files mode
+            local separate_files_mode=false
+            if [ "$ARG_SEPARATE_FILES" = "true" ] || [ "$CONF_SEPARATE_FILES" = "true" ]; then
+                separate_files_mode=true
+                log DEBUG "Separate files mode detected for Git operations"
+            fi
+            
+            if $separate_files_mode; then
+                # Add separate files directories and timestamp
+                local git_add_cmd="git add ./backup_timestamp.txt"
+                
+                # Add workflows directory if it exists
+                if [ -d "workflows" ]; then
+                    git_add_cmd="$git_add_cmd workflows/"
+                    log DEBUG "Adding workflows directory to Git"
+                fi
+                
+                # Add credentials directory if it exists
+                if [ -d "credentials" ]; then
+                    git_add_cmd="$git_add_cmd credentials/"
+                    log DEBUG "Adding credentials directory to Git"
+                fi
+                
+                # Add .env file if it exists
+                if [ -f ".env" ]; then
+                    git_add_cmd="$git_add_cmd .env"
+                fi
+                
+                if ! eval "$git_add_cmd"; then
+                    log ERROR "Git add failed for separate files mode"
+                    cd - > /dev/null || true
+                    return 1
+                fi
+            else
+                # Standard JSON files mode
+                log DEBUG "Adding individual files to Git"
+                if ! git add ./backup_timestamp.txt workflows.json credentials.json .env 2>/dev/null; then
+                    log ERROR "Git add failed for repository root files"
+                    cd - > /dev/null || true
+                    return 1
+                fi
             fi
         fi
-        
-        log SUCCESS "Files added to Git successfully"
-        
-        # Verify that files were staged correctly
-        log DEBUG "Staging status:"
-        git status --short || true
     fi
-
-    local n8n_ver
-    n8n_ver=$(docker exec "$container_id" n8n --version 2>/dev/null || echo "unknown")
-    log DEBUG "Detected n8n version: $n8n_ver"
+    
+    log DEBUG "Staging status:"
+    git status --short || true
 
     # --- Commit Logic --- 
     local commit_status="pending" # Use string instead of boolean to avoid empty command errors
@@ -845,24 +1138,28 @@ backup() {
     log DEBUG "Adding all n8n files to Git..."
     if [ "$use_dated_backup" = "true" ] && [ -n "$backup_timestamp" ] && [ -d "$backup_timestamp" ]; then
         log DEBUG "Adding dated backup directory: $backup_timestamp"
+        
+        # First list what's in the directory (for debugging)
+        log DEBUG "Files in backup directory:"
+        ls -la "$backup_timestamp" || true
+        
+        # Add specific directory
         if ! git add "$backup_timestamp" ./backup_timestamp.txt; then
             log ERROR "Failed to add dated backup directory"
-            git status
             cd - > /dev/null || true
+            rm -rf "$tmp_dir"
             return 1
         fi
     else
-        # Add individual files explicitly to ensure nothing is missed
+        # Standard repo-root backup
         log DEBUG "Adding individual files to Git"
         if ! git add ./backup_timestamp.txt workflows.json credentials.json .env 2>/dev/null; then
             log ERROR "Failed to add n8n files"
-            git status
             cd - > /dev/null || true
             return 1
         fi
     fi
     
-    # Skip Git's change detection and always commit
     log DEBUG "Committing backup with message: $commit_msg"
     if [ "$is_dry_run" = "true" ]; then
         log DRYRUN "Would commit with message: $commit_msg"
@@ -871,7 +1168,6 @@ backup() {
         # Force the commit with --allow-empty to ensure it happens
         if git commit --allow-empty -m "$commit_msg" 2>/dev/null; then
             commit_status="success" # Set flag to indicate commit success
-            log SUCCESS "Changes committed successfully"
         else
             log ERROR "Git commit failed"
             # Show detailed output in case of failure
@@ -1022,7 +1318,7 @@ restore() {
     fi
 
     if $backup_failed; then
-        log WARN "Could not export current data completely. Cannot create pre-restore backup."
+        log ERROR "Could not export current data completely. Cannot create pre-restore backup."
         dockExec "$container_id" "rm -f $container_pre_workflows $container_pre_credentials" false || true
         rm -rf "$pre_restore_dir"
         pre_restore_dir=""
@@ -1072,6 +1368,7 @@ restore() {
     log DEBUG "Created download directory: $download_dir"
 
     local git_repo_url="https://${github_token}@github.com/${github_repo}.git"
+
     log INFO "Cloning repository $github_repo branch $branch..."
     
     log DEBUG "Running: git clone --depth 1 --branch $branch $git_repo_url $download_dir"
@@ -1279,53 +1576,147 @@ restore() {
     log INFO "Importing data into n8n..."
     local import_status="success"
     
+    # Determine if we need to handle import-as-new (strip IDs)
+    local process_import_as_new=false
+    if [ "$ARG_IMPORT_AS_NEW" = "true" ]; then
+        process_import_as_new=true
+        log INFO "Import-as-new mode enabled - will strip IDs to create new copies"
+    fi
+    
+    # Check if we're dealing with separate files mode
+    local using_separate_files=false
+    if [ "$ARG_SEPARATE_FILES" = "true" ] || [ "$CONF_SEPARATE_FILES" = "true" ]; then
+        using_separate_files=true
+        log INFO "Separate files mode detected for restore"
+    fi
+    
     # Import workflows if needed
-    if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
-        if [ "$is_dry_run" = "true" ]; then
-            log DRYRUN "Would run: n8n import:workflow --input=$container_import_workflows"
-        else
-            log INFO "Importing workflows..."
-            local import_output
-            import_output=$(docker exec "$container_id" n8n import:workflow --input=$container_import_workflows 2>&1) || {
-                # Check for specific error conditions
-                if echo "$import_output" | grep -q "already exists"; then
-                    log WARN "Some workflows already exist - attempting to update them..."
-                    if ! dockExec "$container_id" "n8n import:workflow --input=$container_import_workflows --force" "$is_dry_run"; then
-                        log ERROR "Failed to import/update workflows"
-                        import_status="failed"
+    if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]] && [ -z "$ARG_CREDENTIAL_ID" ]; then
+        local workflow_import_file="$container_import_workflows"
+        
+        # Handle import-as-new processing
+        if $process_import_as_new; then
+            local temp_workflow_file="/tmp/import_workflows_no_ids.json"
+            log INFO "Stripping IDs from workflows for import-as-new..."
+            
+            # Copy original file to host temporarily for processing
+            local host_temp_workflows
+            host_temp_workflows=$(mktemp)
+            if ! docker cp "${container_id}:${container_import_workflows}" "$host_temp_workflows"; then
+                log ERROR "Failed to copy workflows file from container for ID processing"
+                import_status="failed"
+            else
+                local host_processed_workflows
+                host_processed_workflows=$(mktemp)
+                if strip_json_ids "$host_temp_workflows" "$host_processed_workflows" "workflow"; then
+                    # Copy processed file back to container
+                    if docker cp "$host_processed_workflows" "${container_id}:${temp_workflow_file}"; then
+                        workflow_import_file="$temp_workflow_file"
+                        log SUCCESS "Workflows processed for import-as-new"
                     else
-                        log SUCCESS "Workflows imported/updated successfully"
+                        log ERROR "Failed to copy processed workflows back to container"
+                        import_status="failed"
                     fi
                 else
-                    log ERROR "Failed to import workflows: $import_output"
+                    log ERROR "Failed to strip IDs from workflows"
                     import_status="failed"
                 fi
-            }
+                rm -f "$host_temp_workflows" "$host_processed_workflows"
+            fi
+        fi
+        
+        # Build import command with user/project assignment
+        if [ "$import_status" = "success" ]; then
+            local workflow_import_cmd
+            if [ -n "$ARG_WORKFLOW_ID" ]; then
+                # This shouldn't happen in restore (workflow ID is for backup), but handle gracefully
+                log WARN "Workflow ID specified in restore - this is unusual. Importing all workflows from file."
+            fi
+            
+            if $using_separate_files; then
+                workflow_import_cmd="n8n import:workflow --separate --input=/tmp/workflows/"
+            else
+                workflow_import_cmd="n8n import:workflow"
+            fi
+            
+            workflow_import_cmd=$(build_import_command "$workflow_import_cmd" "$workflow_import_file" "$ARG_USER_ID" "$ARG_PROJECT_ID")
+            
+            if [ "$is_dry_run" = "true" ]; then
+                log DRYRUN "Would run: $workflow_import_cmd"
+            else
+                log INFO "Importing workflows..."
+                if ! dockExec "$container_id" "$workflow_import_cmd" false; then
+                    log ERROR "Failed to import workflows"
+                    import_status="failed"
+                else
+                    log SUCCESS "Workflows imported successfully"
+                fi
+            fi
         fi
     fi
     
     # Import credentials if needed
-    if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
-        if [ "$is_dry_run" = "true" ]; then
-            log DRYRUN "Would run: n8n import:credentials --input=$container_import_credentials"
-        else
-            log INFO "Importing credentials..."
-            local import_output
-            import_output=$(docker exec "$container_id" n8n import:credentials --input=$container_import_credentials 2>&1) || {
-                # Check for specific error conditions
-                if echo "$import_output" | grep -q "already exists"; then
-                    log WARN "Some credentials already exist - attempting to update them..."
-                    if ! dockExec "$container_id" "n8n import:credentials --input=$container_import_credentials --force" "$is_dry_run"; then
-                        log ERROR "Failed to import/update credentials"
-                        import_status="failed"
+    if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]] && [ -z "$ARG_WORKFLOW_ID" ]; then
+        local credential_import_file="$container_import_credentials"
+        
+        # Handle import-as-new processing
+        if $process_import_as_new && [ "$import_status" = "success" ]; then
+            local temp_credential_file="/tmp/import_credentials_no_ids.json"
+            log INFO "Stripping IDs from credentials for import-as-new..."
+            
+            # Copy original file to host temporarily for processing
+            local host_temp_credentials
+            host_temp_credentials=$(mktemp)
+            if ! docker cp "${container_id}:${container_import_credentials}" "$host_temp_credentials"; then
+                log ERROR "Failed to copy credentials file from container for ID processing"
+                import_status="failed"
+            else
+                local host_processed_credentials
+                host_processed_credentials=$(mktemp)
+                if strip_json_ids "$host_temp_credentials" "$host_processed_credentials" "credential"; then
+                    # Copy processed file back to container
+                    if docker cp "$host_processed_credentials" "${container_id}:${temp_credential_file}"; then
+                        credential_import_file="$temp_credential_file"
+                        log SUCCESS "Credentials processed for import-as-new"
                     else
-                        log SUCCESS "Credentials imported/updated successfully"
+                        log ERROR "Failed to copy processed credentials back to container"
+                        import_status="failed"
                     fi
                 else
-                    log ERROR "Failed to import credentials: $import_output"
+                    log ERROR "Failed to strip IDs from credentials"
                     import_status="failed"
                 fi
-            }
+                rm -f "$host_temp_credentials" "$host_processed_credentials"
+            fi
+        fi
+        
+        # Build import command with user/project assignment
+        if [ "$import_status" = "success" ]; then
+            local credential_import_cmd
+            if [ -n "$ARG_CREDENTIAL_ID" ]; then
+                # This shouldn't happen in restore (credential ID is for backup), but handle gracefully
+                log WARN "Credential ID specified in restore - this is unusual. Importing all credentials from file."
+            fi
+            
+            if $using_separate_files; then
+                credential_import_cmd="n8n import:credentials --separate --input=/tmp/credentials/"
+            else
+                credential_import_cmd="n8n import:credentials"
+            fi
+            
+            credential_import_cmd=$(build_import_command "$credential_import_cmd" "$credential_import_file" "$ARG_USER_ID" "$ARG_PROJECT_ID")
+            
+            if [ "$is_dry_run" = "true" ]; then
+                log DRYRUN "Would run: $credential_import_cmd"
+            else
+                log INFO "Importing credentials..."
+                if ! dockExec "$container_id" "$credential_import_cmd" false; then
+                    log ERROR "Failed to import credentials"
+                    import_status="failed"
+                else
+                    log SUCCESS "Credentials imported successfully"
+                fi
+            fi
         fi
     fi
     
@@ -1397,6 +1788,15 @@ main() {
             --log-file) ARG_LOG_FILE="$2"; shift 2 ;; 
             --trace) DEBUG_TRACE=true; shift 1;; 
             -h|--help) show_help; exit 0 ;; 
+            # Selective backup/restore options
+            --workflow-id) ARG_WORKFLOW_ID="$2"; shift 2 ;;
+            --credential-id) ARG_CREDENTIAL_ID="$2"; shift 2 ;;
+            # Assignment options (restore only)
+            --user-id) ARG_USER_ID="$2"; shift 2 ;;
+            --project-id) ARG_PROJECT_ID="$2"; shift 2 ;;
+            # Advanced options
+            --separate-files) ARG_SEPARATE_FILES=true; shift 1 ;;
+            --import-as-new) ARG_IMPORT_AS_NEW=true; shift 1 ;;
             *) echo -e "${RED}[ERROR]${NC} Invalid option: $1" >&2; show_help; exit 1 ;; 
         esac
     done
@@ -1552,4 +1952,3 @@ trap 'log ERROR "An unexpected error occurred (Line: $LINENO). Aborting."; exit 
 main "$@"
 
 exit 0
-

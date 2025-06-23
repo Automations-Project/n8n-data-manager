@@ -5,3 +5,5 @@
 .github/workflows/job-logs.txt
 .github/test/workflows
 test.logs
+n8n-cli-commands-doc.md
+ENHANCEMENTS.md
