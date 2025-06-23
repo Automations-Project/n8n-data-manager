@@ -975,36 +975,89 @@ backup() {
 
     log INFO "Copying exported files from container into Git directory..."
     local copy_status="success" # Use string instead of boolean to avoid empty command errors
-    for file in workflows.json credentials.json .env; do
-        source_file="/tmp/${file}"
+    
+    # Determine files/directories to copy based on mode
+    local items_to_copy=()
+    if $using_separate_files; then
+        # Copy directories for separate files mode
+        if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
+            items_to_copy+=("workflows/")
+        fi
+        if [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
+            items_to_copy+=("credentials/")
+        fi
+        items_to_copy+=(".env")
+    else
+        # Copy JSON files for traditional mode
+        if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
+            items_to_copy+=("workflows.json")
+        fi
+        if [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
+            items_to_copy+=("credentials.json")
+        fi
+        items_to_copy+=(".env")
+    fi
+    
+    # Copy each item (file or directory)
+    for item in "${items_to_copy[@]}"; do
+        source_path="/tmp/${item}"
         if [ "$use_dated_backup" = "true" ]; then
             # Create timestamped subdirectory
             mkdir -p "${target_dir}" || return 1
-            dest_file="${target_dir}/${file}"
+            dest_path="${target_dir}/${item}"
         else
-            dest_file="${tmp_dir}/${file}"
+            dest_path="${tmp_dir}/${item}"
         fi
 
-        # Check if file exists in container
-        if ! docker exec "$container_id" test -f "$source_file"; then
-            if [[ "$file" == ".env" ]]; then
+        # Check if item exists in container (file or directory)
+        local item_exists=false
+        if [[ "$item" == */ ]]; then
+            # Directory check
+            if docker exec "$container_id" test -d "$source_path"; then
+                item_exists=true
+            fi
+        else
+            # File check
+            if docker exec "$container_id" test -f "$source_path"; then
+                item_exists=true
+            fi
+        fi
+        
+        if ! $item_exists; then
+            if [[ "$item" == ".env" ]]; then
                 log WARN ".env file not found in container, skipping."
                 continue
             else
-                log ERROR "Required file $file not found in container"
+                log ERROR "Required item $item not found in container"
                 copy_status="failed"
                 continue
             fi
         fi
 
-        # Copy file from container
-        size=$(docker exec "$container_id" du -h "$source_file" | awk '{print $1}')
-        if ! docker cp "${container_id}:${source_file}" "${dest_file}"; then
-            log ERROR "Failed to copy $file from container"
-            copy_status="failed"
-            continue
+        # Copy item from container
+        if [[ "$item" == */ ]]; then
+            # Copy directory
+            log DEBUG "Copying directory $item from container"
+            if ! docker cp "${container_id}:${source_path%/}" "$(dirname "$dest_path")"; then
+                log ERROR "Failed to copy directory $item from container"
+                copy_status="failed"
+                continue
+            fi
+            # Count files in directory for reporting
+            local file_count
+            file_count=$(docker exec "$container_id" find "$source_path" -name "*.json" -type f | wc -l)
+            log SUCCESS "Successfully copied directory $item ($file_count files) to ${dest_path}"
+        else
+            # Copy file
+            local size
+            size=$(docker exec "$container_id" du -h "$source_path" | awk '{print $1}')
+            if ! docker cp "${container_id}:${source_path}" "${dest_path}"; then
+                log ERROR "Failed to copy $item from container"
+                copy_status="failed"
+                continue
+            fi
+            log SUCCESS "Successfully copied $size to ${dest_path}"
         fi
-        log SUCCESS "Successfully copied $size to ${dest_file}"
         
         # Force Git to see changes by updating a separate timestamp file instead of modifying the JSON files
         # This preserves the integrity of the n8n files for restore operations

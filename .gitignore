@@ -4,6 +4,7 @@
 .windsurf/workflows/n8n-manager-shell-script-project-knowledge.md
 .github/workflows/job-logs.txt
 .github/test/workflows
-test.logs
+#test.logs
 n8n-cli-commands-doc.md
 ENHANCEMENTS.md
+test.logs
