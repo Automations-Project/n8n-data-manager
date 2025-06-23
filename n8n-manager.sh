@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.19"
+VERSION="3.0.20"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
