@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.22"
+VERSION="3.0.24"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -921,7 +921,9 @@ backup() {
                         # Update credential export command to include discovered credentials
                         if $using_separate_files; then
                             # For separate files, export each credential individually
-                            for cred_id in $additional_credential_ids; do
+                            local -a cred_array
+                            read -ra cred_array <<< "$additional_credential_ids"
+                            for cred_id in "${cred_array[@]}"; do
                                 local extra_cred_cmd="n8n export:credentials --id=$cred_id --decrypted --pretty --output=/tmp/credential_$cred_id.json"
                                 log DEBUG "Exporting linked credential: $extra_cred_cmd"
                                 dockExec "$container_id" "$extra_cred_cmd" false || log WARN "Failed to export linked credential ID: $cred_id"
@@ -934,7 +936,9 @@ backup() {
                             fi
                             # Build export command for multiple specific credentials
                             credential_export_cmd="n8n export:credentials --decrypted --output=$container_credentials"
-                            for cred_id in $all_cred_ids; do
+                            local -a all_cred_array
+                            read -ra all_cred_array <<< "$all_cred_ids"
+                            for cred_id in "${all_cred_array[@]}"; do
                                 credential_export_cmd="$credential_export_cmd --id=$cred_id"
                             done
                         fi
@@ -1111,20 +1115,38 @@ backup() {
     # Determine files/directories to copy based on mode
     local items_to_copy=()
     if $using_separate_files; then
-        # Copy directories for separate files mode
-        if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
+        # Copy directories or specific files for separate files mode
+        if [ -n "$ARG_WORKFLOW_ID" ]; then
+            # Specific workflow: copy only the individual workflow file
+            items_to_copy+=("workflow_$ARG_WORKFLOW_ID.json")
+        elif [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
+            # All workflows: copy entire workflows directory
             items_to_copy+=("workflows/")
         fi
-        if [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
+        
+        if [ -n "$ARG_CREDENTIAL_ID" ]; then
+            # Specific credential: copy only the individual credential file
+            items_to_copy+=("credential_$ARG_CREDENTIAL_ID.json")
+        elif [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
+            # All credentials: copy entire credentials directory
             items_to_copy+=("credentials/")
         fi
+        
+        # For linked credentials in workflow-specific backup
+        if [ -n "$ARG_WORKFLOW_ID" ] && [ "$ARG_INCLUDE_LINKED_CREDS" = "true" ]; then
+            # Note: linked credential files will be handled by the credential discovery logic above
+            # They are exported as individual files like credential_CREDID.json
+            # These files will be copied in the main copy loop
+            log DEBUG "Linked credential files will be copied individually"
+        fi
+        
         items_to_copy+=(".env")
     else
         # Copy JSON files for traditional mode
-        if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
+        if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
             items_to_copy+=("workflows.json")
         fi
-        if [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
+        if [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
             items_to_copy+=("credentials.json")
         fi
         items_to_copy+=(".env")
@@ -1730,7 +1752,7 @@ restore() {
     
     # Copy workflow file if needed
     if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
-        if [ "$is_dry_run" = "true" ]; then
+        if $is_dry_run; then
             log DRYRUN "Would copy $repo_workflows to ${container_id}:${container_import_workflows}"
         else
             log INFO "Copying workflows file to container..."
@@ -1745,7 +1767,7 @@ restore() {
     
     # Copy credentials file if needed
     if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
-        if [ "$is_dry_run" = "true" ]; then
+        if $is_dry_run; then
             log DRYRUN "Would copy $repo_credentials to ${container_id}:${container_import_credentials}"
         else
             log INFO "Copying credentials file to container..."
