@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.21"
+VERSION="3.0.22"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -1398,7 +1398,6 @@ backup() {
         return 1
     fi
     
-    # Found a commit, so push it
     log DEBUG "Pushing commit $last_commit to origin/$branch"
     
     # Use a direct git command with full output
@@ -1965,16 +1964,16 @@ discover_linked_credentials() {
     local workflow_json_file="$1"
     local discovered_creds=""
     
-    log DEBUG "Discovering linked credentials from workflow: $workflow_json_file"
+    log DEBUG "Discovering linked credentials from workflow: $workflow_json_file" >&2
     
     if [ ! -f "$workflow_json_file" ]; then
-        log ERROR "Workflow JSON file not found: $workflow_json_file"
+        log ERROR "Workflow JSON file not found: $workflow_json_file" >&2
         return 1
     fi
     
     # Method 1: Try with Python3 (most reliable)
     if command_exists python3; then
-        log DEBUG "Using Python3 for credential discovery"
+        log DEBUG "Using Python3 for credential discovery" >&2
         discovered_creds=$(python3 -c "
 import json, sys
 try:
@@ -2015,12 +2014,12 @@ except Exception as e:
     
     # Method 2: Fallback to grep/sed (basic extraction)  
     elif command_exists grep && command_exists sed; then
-        log DEBUG "Using grep/sed for credential discovery"
+        log DEBUG "Using grep/sed for credential discovery" >&2
         discovered_creds=$(grep -o '"credentials":[^}]*"id":"[^"]*"' "$workflow_json_file" 2>/dev/null | \
                           sed 's/.*"id":"\([^"]*\)".*/\1/' | \
                           sort -u | tr '\n' ' ' | sed 's/ $//')
     else
-        log WARN "No suitable JSON parsing tools available for credential discovery"
+        log WARN "No suitable JSON parsing tools available for credential discovery" >&2
         return 1
     fi
     
@@ -2028,11 +2027,11 @@ except Exception as e:
     discovered_creds=$(echo "$discovered_creds" | xargs)
     
     if [ -n "$discovered_creds" ]; then
-        log SUCCESS "Discovered linked credentials: $discovered_creds"
+        log SUCCESS "Discovered linked credentials: $discovered_creds" >&2
         echo "$discovered_creds"
         return 0
     else
-        log INFO "No linked credentials found in workflow"
+        log INFO "No linked credentials found in workflow" >&2
         return 0
     fi
 }
