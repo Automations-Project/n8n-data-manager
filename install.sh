@@ -209,6 +209,8 @@ fi
 if [ "$INSTALL_WORKFLOWS_EDITOR" = true ]; then
     if ! download_script "$WORKFLOWS_EDITOR_NAME" "$WORKFLOWS_EDITOR_URL" "$WORKFLOWS_EDITOR_INSTALL_PATH"; then
         log_warning "Failed to install workflows bulk editor, but main script is available"
+    else
+        log_success "Workflows bulk editor installed successfully."
     fi
 fi
 

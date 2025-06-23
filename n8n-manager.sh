@@ -216,6 +216,26 @@ load_config() {
     fi
 }
 
+launch_workflows_editor() {
+    local editor_script="n8n-workflows-bulk-editor.sh"
+    if command_exists "$editor_script"; then
+        log INFO "Launching Workflows Bulk Editor..."
+        # Execute the script, preserving the current shell environment
+        "$editor_script" --interactive
+        # After it exits, prompt the user to return to the main menu
+        echo -e "\n${BLUE}Bulk editor finished. Press Enter to return to the main menu...${NC}"
+        read -r
+        # Reset action to show menu again
+        SELECTED_ACTION=""
+    else
+        log ERROR "Workflows Bulk Editor script not found or not executable."
+        log INFO "Please ensure '$editor_script' is installed and in your PATH."
+        # Pause to let the user see the error
+        sleep 3
+        SELECTED_ACTION=""
+    fi
+}
+
 show_help() {
     cat << EOF
 Usage: $(basename "$0") [OPTIONS]
@@ -337,7 +357,8 @@ select_action() {
     log HEADER "Choose Action"
     echo "1) Backup n8n to GitHub"
     echo "2) Restore n8n from GitHub"
-    echo "3) Quit"
+    echo "3) Launch Workflows Bulk Editor"
+    echo "4) Quit"
 
     local choice
     while true; do
@@ -346,8 +367,9 @@ select_action() {
         case "$choice" in
             1) SELECTED_ACTION="backup"; return ;; 
             2) SELECTED_ACTION="restore"; return ;; 
-            3) log INFO "Exiting..."; exit 0 ;; 
-            *) log ERROR "Invalid option. Please select 1, 2, or 3." ;; 
+            3) launch_workflows_editor; return ;;
+            4) log INFO "Exiting..."; exit 0 ;; 
+            *) log ERROR "Invalid option. Please select 1, 2, 3, or 4." ;; 
         esac
     done
 }
