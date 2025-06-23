@@ -71,9 +71,16 @@ fi
 
 log_info "Downloading ${SCRIPT_NAME} from ${SCRIPT_URL}..."
 temp_script=$(mktemp)
-# Add timestamp to prevent caching issues
-script_url_with_timestamp="${SCRIPT_URL}?$(date +%s)"
-if ! curl -fsSL --connect-timeout 10 "$script_url_with_timestamp" -o "$temp_script"; then
+# Add multiple cache-busting parameters to prevent caching issues
+timestamp="$(date +%s)"
+random_suffix="$RANDOM"
+script_url_with_cache_bust="${SCRIPT_URL}?t=${timestamp}&r=${random_suffix}&cache=false"
+# Use aggressive cache-busting headers
+if ! curl -fsSL --connect-timeout 10 \
+    -H "Cache-Control: no-cache, no-store, must-revalidate" \
+    -H "Pragma: no-cache" \
+    -H "Expires: 0" \
+    "$script_url_with_cache_bust" -o "$temp_script"; then
     log_error "Failed to download the script. Check the URL and network connection."
     rm -f "$temp_script"
     exit 1
