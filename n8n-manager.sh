@@ -1167,7 +1167,15 @@ backup() {
     
     # Create a timestamp with seconds to ensure uniqueness
     local backup_time=$(date +"%Y-%m-%d_%H-%M-%S")
-    local commit_msg="🛡️ n8n Backup (v$n8n_ver) - $backup_time"
+    
+    # Get n8n version from container (optional, fallback to generic message if unavailable)
+    local n8n_ver=""
+    if n8n_ver=$(docker exec "$container_id" n8n --version 2>/dev/null | head -n1 | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -n1); then
+        local commit_msg="🛡️ n8n Backup (v$n8n_ver) - $backup_time"
+    else
+        local commit_msg="🛡️ n8n Backup - $backup_time"
+    fi
+    
     if [ "$use_dated_backup" = "true" ]; then
         commit_msg="$commit_msg [$backup_timestamp]"
     fi
@@ -1870,7 +1878,6 @@ main() {
     local github_repo="$ARG_REPO"
     local branch="${ARG_BRANCH:-main}"
     local use_dated_backup=$ARG_DATED_BACKUPS
-    local restore_type="${ARG_RESTORE_TYPE:-all}"
     local is_dry_run=$ARG_DRY_RUN
 
     log DEBUG "Initial Action: $action"
@@ -1878,7 +1885,6 @@ main() {
     log DEBUG "Initial Repo: $github_repo"
     log DEBUG "Initial Branch: $branch"
     log DEBUG "Initial Dated Backup: $use_dated_backup"
-    log DEBUG "Initial Restore Type: $restore_type"
     log DEBUG "Initial Dry Run: $is_dry_run"
     log DEBUG "Initial Verbose: $ARG_VERBOSE"
     log DEBUG "Initial Log File: $ARG_LOG_FILE"
