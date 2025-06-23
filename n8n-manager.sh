@@ -1878,6 +1878,7 @@ main() {
     local github_repo="$ARG_REPO"
     local branch="${ARG_BRANCH:-main}"
     local use_dated_backup=$ARG_DATED_BACKUPS
+    local restore_type="${ARG_RESTORE_TYPE:-all}"
     local is_dry_run=$ARG_DRY_RUN
 
     log DEBUG "Initial Action: $action"
