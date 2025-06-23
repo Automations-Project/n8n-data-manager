@@ -1982,22 +1982,38 @@ try:
         data = json.load(f)
     
     creds = set()
-    if 'workflows' in data:
-        for workflow in data['workflows']:
-            if 'nodes' in workflow:
-                for node in workflow['nodes']:
-                    if 'credentials' in node:
-                        for cred_type, cred_info in node['credentials'].items():
-                            if 'id' in cred_info:
-                                creds.add(cred_info['id'])
     
-    print(' '.join(creds))
+    # Handle both single workflow export and multiple workflows export
+    workflows_to_process = []
+    
+    if isinstance(data, list):
+        # Multiple workflows (array format)
+        workflows_to_process = data
+    elif 'workflows' in data:
+        # Multiple workflows (object with workflows key)
+        workflows_to_process = data['workflows']
+    elif 'nodes' in data:
+        # Single workflow export (direct workflow object)
+        workflows_to_process = [data]
+    else:
+        # Try to process as single workflow anyway
+        workflows_to_process = [data]
+    
+    for workflow in workflows_to_process:
+        if 'nodes' in workflow:
+            for node in workflow['nodes']:
+                if 'credentials' in node:
+                    for cred_type, cred_info in node['credentials'].items():
+                        if isinstance(cred_info, dict) and 'id' in cred_info:
+                            creds.add(cred_info['id'])
+    
+    print(' '.join(sorted(creds)))
 except Exception as e:
     print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
 " 2>/dev/null)
     
-    # Method 2: Fallback to grep/sed (basic extraction)
+    # Method 2: Fallback to grep/sed (basic extraction)  
     elif command_exists grep && command_exists sed; then
         log DEBUG "Using grep/sed for credential discovery"
         discovered_creds=$(grep -o '"credentials":[^}]*"id":"[^"]*"' "$workflow_json_file" 2>/dev/null | \
@@ -2007,6 +2023,9 @@ except Exception as e:
         log WARN "No suitable JSON parsing tools available for credential discovery"
         return 1
     fi
+    
+    # Clean any whitespace and validate output
+    discovered_creds=$(echo "$discovered_creds" | xargs)
     
     if [ -n "$discovered_creds" ]; then
         log SUCCESS "Discovered linked credentials: $discovered_creds"
@@ -2032,7 +2051,7 @@ get_incremental_changes() {
         return 1
     fi
     
-    # Change to git repository directory
+    # Change to the git repository directory
     local original_pwd=$(pwd)
     cd "$git_repo_path" || {
         log ERROR "Failed to change to git repository: $git_repo_path"
