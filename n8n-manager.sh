@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.24"
+VERSION="3.0.25"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -921,9 +921,7 @@ backup() {
                         # Update credential export command to include discovered credentials
                         if $using_separate_files; then
                             # For separate files, export each credential individually
-                            local -a cred_array
-                            read -ra cred_array <<< "$additional_credential_ids"
-                            for cred_id in "${cred_array[@]}"; do
+                            for cred_id in $additional_credential_ids; do
                                 local extra_cred_cmd="n8n export:credentials --id=$cred_id --decrypted --pretty --output=/tmp/credential_$cred_id.json"
                                 log DEBUG "Exporting linked credential: $extra_cred_cmd"
                                 dockExec "$container_id" "$extra_cred_cmd" false || log WARN "Failed to export linked credential ID: $cred_id"
@@ -936,9 +934,7 @@ backup() {
                             fi
                             # Build export command for multiple specific credentials
                             credential_export_cmd="n8n export:credentials --decrypted --output=$container_credentials"
-                            local -a all_cred_array
-                            read -ra all_cred_array <<< "$all_cred_ids"
-                            for cred_id in "${all_cred_array[@]}"; do
+                            for cred_id in $all_cred_ids; do
                                 credential_export_cmd="$credential_export_cmd --id=$cred_id"
                             done
                         fi
@@ -954,7 +950,7 @@ backup() {
                 log WARN "Failed to copy workflow file for credential discovery"
             fi
             # Clean up container temp file
-            dockExec "$container_id" "rm -f $temp_workflow_file" false
+            dockExec "$container_id" "rm -f $temp_workflow_file" false || true
         else
             log WARN "Failed to export workflow for credential discovery"
         fi
@@ -1412,7 +1408,8 @@ backup() {
     }
     
     # Check if git log shows recent commits
-    last_commit=$(git log -1 --pretty=format:"%H" 2>/dev/null)
+    last_commit=$(git log -1 --pretty=format:"%H" 2>/dev/null || echo "")
+    
     if [ -z "$last_commit" ]; then
         log ERROR "No commits found to push"
         cd - > /dev/null || true
