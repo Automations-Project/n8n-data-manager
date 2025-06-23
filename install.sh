@@ -71,21 +71,48 @@ fi
 
 log_info "Downloading ${SCRIPT_NAME} from ${SCRIPT_URL}..."
 temp_script=$(mktemp)
-# Add multiple cache-busting parameters to prevent caching issues
+
+# Enhanced cache-busting parameters
 timestamp="$(date +%s)"
+nanoseconds="$(date +%N 2>/dev/null || echo "$RANDOM$RANDOM")"  # Fallback for systems without nanoseconds
 random_suffix="$RANDOM"
-script_url_with_cache_bust="${SCRIPT_URL}?t=${timestamp}&r=${random_suffix}&cache=false"
-# Use aggressive cache-busting headers
-if ! curl -fsSL --connect-timeout 10 \
-    -H "Cache-Control: no-cache, no-store, must-revalidate" \
+pid="$$"
+uuid_like="${timestamp:0:8}-${random_suffix}-${pid}-${nanoseconds:0:8}"
+
+# Build URL with multiple cache-busting parameters
+script_url_with_cache_bust="${SCRIPT_URL}?cb=${timestamp}&r=${random_suffix}&uuid=${uuid_like}&nocache=1&_=${timestamp}${nanoseconds}"
+
+log_info "Using cache-busted URL: ${SCRIPT_URL}?cb=${timestamp}&..."
+
+# Use aggressive cache-busting headers and options
+if ! curl -fsSL --connect-timeout 30 --max-time 120 \
+    -H "Cache-Control: no-cache, no-store, must-revalidate, max-age=0" \
     -H "Pragma: no-cache" \
     -H "Expires: 0" \
+    -H "If-Modified-Since: Mon, 26 Jul 1997 05:00:00 GMT" \
+    -H "If-None-Match: *" \
+    -H "User-Agent: n8n-installer-$(date +%s)" \
+    --no-keepalive \
     "$script_url_with_cache_bust" -o "$temp_script"; then
     log_error "Failed to download the script. Check the URL and network connection."
     rm -f "$temp_script"
     exit 1
 fi
 log_success "Script downloaded successfully."
+
+# Verify the downloaded file is not empty and contains expected content
+if [[ ! -s "$temp_script" ]]; then
+    log_error "Downloaded script is empty."
+    rm -f "$temp_script"
+    exit 1
+fi
+
+# Basic validation - check if it looks like a shell script
+if ! head -n 1 "$temp_script" | grep -q "^#!/"; then
+    log_error "Downloaded file doesn't appear to be a valid shell script."
+    rm -f "$temp_script"
+    exit 1
+fi
 
 log_info "Making the script executable..."
 if ! chmod +x "$temp_script"; then
