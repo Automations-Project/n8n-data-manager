@@ -56,6 +56,36 @@ check_dependencies() {
     log_success "Dependencies found."
 }
 
+download_script() {
+    local url="$1"
+    local output_file="$2"
+    local description="$3"
+    
+    log_info "${description}"
+    log_info "URL: ${url}"
+    
+    if curl -fsSL --connect-timeout 30 --max-time 120 \
+        -H "Cache-Control: no-cache" \
+        -H "Pragma: no-cache" \
+        "${url}" -o "${output_file}"; then
+        
+        # Check if file was actually downloaded and has content
+        if [[ -s "${output_file}" ]]; then
+            local file_size=$(stat -c%s "${output_file}" 2>/dev/null || wc -c < "${output_file}")
+            log_success "Download completed successfully (${file_size} bytes)"
+            return 0
+        else
+            log_error "Download completed but file is empty"
+            rm -f "${output_file}"
+            return 1
+        fi
+    else
+        log_error "Download failed"
+        rm -f "${output_file}"
+        return 1
+    fi
+}
+
 # --- Main Installation Logic ---
 
 log_info "Starting n8n-manager installation..."
@@ -69,94 +99,72 @@ if [[ "$SCRIPT_URL" == *"PLACEHOLDER"* ]]; then
     exit 1
 fi
 
-log_info "Downloading ${SCRIPT_NAME} from ${SCRIPT_URL}..."
 temp_script=$(mktemp)
 
-# Enhanced cache-busting parameters (simplified for GitHub compatibility)
+# Generate cache-busting parameters
 timestamp="$(date +%s)"
 random_suffix="$RANDOM"
 
-# Build URL with simple cache-busting parameters
-script_url_with_cache_bust="${SCRIPT_URL}?t=${timestamp}&r=${random_suffix}"
-
-log_info "Using cache-busted URL: ${script_url_with_cache_bust}"
-
-# First, let's try downloading and see what we get
-log_info "Attempting download with cache-busting..."
-if ! curl -fsSL --connect-timeout 30 --max-time 120 \
-    -H "Cache-Control: no-cache" \
-    -H "Pragma: no-cache" \
-    "$script_url_with_cache_bust" -o "$temp_script"; then
-    log_error "Failed to download with cache-busting. Trying without cache parameters..."
-    # Fallback: try without cache-busting parameters
-    if ! curl -fsSL --connect-timeout 30 --max-time 120 \
-        -H "Cache-Control: no-cache" \
-        -H "Pragma: no-cache" \
-        "$SCRIPT_URL" -o "$temp_script"; then
-        log_error "Failed to download the script. Check the URL and network connection."
-        rm -f "$temp_script"
+# Try downloading with cache-busting first
+cache_busted_url="${SCRIPT_URL}?t=${timestamp}&r=${random_suffix}"
+if download_script "${cache_busted_url}" "${temp_script}" "Downloading ${SCRIPT_NAME} with cache-busting..."; then
+    log_success "Downloaded successfully with cache-busting"
+else
+    log_info "Cache-busted download failed, trying without cache parameters..."
+    if download_script "${SCRIPT_URL}" "${temp_script}" "Downloading ${SCRIPT_NAME} (fallback)..."; then
+        log_success "Downloaded successfully with fallback method"
+    else
+        log_error "All download attempts failed. Check the URL and network connection."
         exit 1
     fi
-    log_info "Downloaded successfully using fallback method."
 fi
-log_success "Script downloaded successfully."
 
-# Verify the downloaded file is not empty and contains expected content
-file_size=$(stat -c%s "$temp_script" 2>/dev/null || wc -c < "$temp_script")
-log_info "Downloaded file size: ${file_size} bytes"
+# Validate the downloaded script
+log_info "Validating downloaded script..."
+first_line=$(head -n 1 "${temp_script}" 2>/dev/null || echo "")
 
-if [[ ! -s "$temp_script" ]]; then
-    log_error "Downloaded script is empty."
-    log_info "Attempted URL: ${script_url_with_cache_bust}"
-    log_info "Fallback URL: ${SCRIPT_URL}"
-    log_info "Debugging: Let's check what we actually downloaded..."
-    if [[ -f "$temp_script" ]]; then
-        log_info "File exists but is empty. Content:"
-        cat "$temp_script" || echo "(no content or binary)"
-    fi
-    rm -f "$temp_script"
+if [[ -z "$first_line" ]]; then
+    log_error "Downloaded script appears to be empty or unreadable"
+    rm -f "${temp_script}"
     exit 1
 fi
-
-# Basic validation - check if it looks like a shell script
-first_line=$(head -n 1 "$temp_script" 2>/dev/null || echo "")
-log_info "First line of downloaded script: ${first_line}"
 
 if ! echo "$first_line" | grep -q "^#!/"; then
     log_error "Downloaded file doesn't appear to be a valid shell script."
-    log_info "First few lines of the file:"
-    head -n 5 "$temp_script" 2>/dev/null || echo "(unable to read file)"
-    rm -f "$temp_script"
+    log_info "First line: ${first_line}"
+    rm -f "${temp_script}"
     exit 1
 fi
+
+log_success "Script validation passed"
 
 log_info "Making the script executable..."
-if ! chmod +x "$temp_script"; then
+if ! chmod +x "${temp_script}"; then
     log_error "Failed to make the script executable."
-    rm -f "$temp_script"
+    rm -f "${temp_script}"
     exit 1
 fi
 
-log_info "Moving the script to ${INSTALL_PATH} using sudo..."
+log_info "Moving the script to ${INSTALL_PATH}..."
 if [[ $EUID -ne 0 ]]; then
     # Not root, use sudo
-    if ! sudo mv "$temp_script" "$INSTALL_PATH"; then
+    if ! sudo mv "${temp_script}" "${INSTALL_PATH}"; then
         log_error "Failed to move the script to ${INSTALL_PATH}. Check permissions or run installer with sudo."
-        rm -f "$temp_script"
+        rm -f "${temp_script}"
         exit 1
     fi
 else
     # Already root, move directly
-    if ! mv "$temp_script" "$INSTALL_PATH"; then
+    if ! mv "${temp_script}" "${INSTALL_PATH}"; then
         log_error "Failed to move the script to ${INSTALL_PATH}. Check permissions."
-        rm -f "$temp_script"
+        rm -f "${temp_script}"
         exit 1
     fi
 fi
 
-# Clean up temp file if move failed and it still exists (shouldn't happen often)
-if [ -f "$temp_script" ]; then
-    rm -f "$temp_script"
+# Clean up temp file if it still exists
+if [ -f "${temp_script}" ]; then
+    rm -f "${temp_script}"
 fi
 
 log_success "${SCRIPT_NAME} installed successfully to ${INSTALL_PATH}"
