@@ -37,6 +37,8 @@ ARG_USER_ID=""
 ARG_PROJECT_ID=""
 ARG_SEPARATE_FILES=false
 ARG_IMPORT_AS_NEW=false
+ARG_INCLUDE_LINKED_CREDS=false
+ARG_INCREMENTAL=false
 CONF_DATED_BACKUPS=false
 CONF_VERBOSE=false
 CONF_LOG_FILE=""
@@ -259,6 +261,8 @@ Options:
                           Restore: Imports from directory of separate JSON files.
   --import-as-new         Import items as new copies (strips IDs to avoid overwriting).
                           Useful for cloning workflows or safe imports.
+  --include-linked-creds  Include linked credentials in backup (default: false).
+  --incremental           Perform incremental backup (default: false).
   
   General Options:
   --dry-run               Simulate the action without making any changes.
@@ -895,43 +899,171 @@ backup() {
         fi
     fi
 
-    # Execute workflow export
-    if [ -n "$ARG_WORKFLOW_ID" ] || [ "$ARG_RESTORE_TYPE" != "credentials" ]; then
-        log DEBUG "Executing workflow export: $workflow_export_cmd"
-        if ! dockExec "$container_id" "$workflow_export_cmd" false; then 
-            # Check if the error is due to no workflows or specific workflow not found
-            if [ -n "$ARG_WORKFLOW_ID" ]; then
-                log ERROR "Failed to export workflow ID: $ARG_WORKFLOW_ID (workflow may not exist)"
-                export_failed=true
-            elif docker exec "$container_id" n8n list workflows 2>&1 | grep -q "No workflows found"; then
-                log INFO "No workflows found to backup - this is a clean installation"
-                no_data_found=true
+    # --- Advanced Feature Integration ---
+    
+    # Feature 1: Auto-include linked credentials for specific workflow backup
+    local additional_credential_ids=""
+    if [ -n "$ARG_WORKFLOW_ID" ] && [ "$ARG_INCLUDE_LINKED_CREDS" = "true" ]; then
+        log INFO "Auto-discovering linked credentials for workflow ID: $ARG_WORKFLOW_ID"
+        
+        # First export the workflow to discover linked credentials
+        local temp_workflow_file="/tmp/temp_workflow_for_creds.json"
+        local temp_export_cmd="n8n export:workflow --id=$ARG_WORKFLOW_ID --output=$temp_workflow_file"
+        
+        if dockExec "$container_id" "$temp_export_cmd" false; then
+            # Copy the workflow file to host for analysis
+            local host_temp_workflow="$tmp_dir/temp_workflow.json"
+            if docker cp "$container_id:$temp_workflow_file" "$host_temp_workflow"; then
+                # Discover linked credentials
+                if additional_credential_ids=$(discover_linked_credentials "$host_temp_workflow"); then
+                    if [ -n "$additional_credential_ids" ]; then
+                        log SUCCESS "Found linked credentials: $additional_credential_ids"
+                        # Update credential export command to include discovered credentials
+                        if $using_separate_files; then
+                            # For separate files, export each credential individually
+                            for cred_id in $additional_credential_ids; do
+                                local extra_cred_cmd="n8n export:credentials --id=$cred_id --decrypted --pretty --output=/tmp/credential_$cred_id.json"
+                                log DEBUG "Exporting linked credential: $extra_cred_cmd"
+                                dockExec "$container_id" "$extra_cred_cmd" false || log WARN "Failed to export linked credential ID: $cred_id"
+                            done
+                        else
+                            # For single file, modify the credential export to include specific IDs
+                            local all_cred_ids="$additional_credential_ids"
+                            if [ -n "$ARG_CREDENTIAL_ID" ]; then
+                                all_cred_ids="$ARG_CREDENTIAL_ID $additional_credential_ids"
+                            fi
+                            # Build export command for multiple specific credentials
+                            credential_export_cmd="n8n export:credentials --decrypted --output=$container_credentials"
+                            for cred_id in $all_cred_ids; do
+                                credential_export_cmd="$credential_export_cmd --id=$cred_id"
+                            done
+                        fi
+                    else
+                        log INFO "No linked credentials found for this workflow"
+                    fi
+                else
+                    log WARN "Failed to discover linked credentials"
+                fi
+                # Clean up temp file
+                rm -f "$host_temp_workflow"
             else
-                log ERROR "Failed to export workflows"
-                export_failed=true
+                log WARN "Failed to copy workflow file for credential discovery"
             fi
+            # Clean up container temp file
+            dockExec "$container_id" "rm -f $temp_workflow_file" false
         else
-            log SUCCESS "Workflow export completed successfully"
+            log WARN "Failed to export workflow for credential discovery"
+        fi
+    fi
+    
+    # Feature 2: Incremental backup logic
+    local incremental_files_to_export=""
+    local skip_export_due_to_no_changes=false
+    if [ "$ARG_INCREMENTAL" = "true" ]; then
+        log INFO "Performing incremental backup analysis..."
+        
+        # Only proceed with incremental if we have an existing git repository
+        if $branch_exists; then
+            # Create temporary export to compare against
+            local temp_export_dir="$tmp_dir/temp_export"
+            mkdir -p "$temp_export_dir"
+            
+            # Export current data to temporary location for comparison
+            local temp_workflows_file="$temp_export_dir/workflows.json"
+            local temp_credentials_file="$temp_export_dir/credentials.json"
+            
+            if $using_separate_files; then
+                # Export to separate files for comparison
+                dockExec "$container_id" "n8n export:workflow --backup --output=/tmp/temp_workflows/" false || true
+                dockExec "$container_id" "n8n export:credentials --backup --decrypted --output=/tmp/temp_credentials/" false || true
+                docker cp "$container_id:/tmp/temp_workflows/" "$temp_export_dir/" 2>/dev/null || true
+                docker cp "$container_id:/tmp/temp_credentials/" "$temp_export_dir/" 2>/dev/null || true
+            else
+                # Export to single files for comparison
+                dockExec "$container_id" "n8n export:workflow --all --output=/tmp/temp_workflows.json" false || true
+                dockExec "$container_id" "n8n export:credentials --all --decrypted --output=/tmp/temp_credentials.json" false || true
+                docker cp "$container_id:/tmp/temp_workflows.json" "$temp_workflows_file" 2>/dev/null || true
+                docker cp "$container_id:/tmp/temp_credentials.json" "$temp_credentials_file" 2>/dev/null || true
+            fi
+            
+            # Analyze incremental changes
+            if incremental_files_to_export=$(get_incremental_changes "$tmp_dir" "$temp_export_dir"); then
+                log SUCCESS "Incremental analysis completed. Changed files: $incremental_files_to_export"
+                
+                # Filter export commands based on what has actually changed
+                if ! echo "$incremental_files_to_export" | grep -q "workflow"; then
+                    log INFO "No workflow changes detected - skipping workflow export"
+                    workflow_export_cmd=""
+                fi
+                if ! echo "$incremental_files_to_export" | grep -q "credential"; then
+                    log INFO "No credential changes detected - skipping credential export"
+                    credential_export_cmd=""
+                fi
+                
+                # Check if any exports are still needed
+                if [ -z "$workflow_export_cmd" ] && [ -z "$credential_export_cmd" ]; then
+                    log INFO "No changes detected since last backup - skipping export"
+                    skip_export_due_to_no_changes=true
+                fi
+            else
+                local incremental_exit_code=$?
+                if [ $incremental_exit_code -eq 2 ]; then
+                    log INFO "No changes detected since last backup"
+                    skip_export_due_to_no_changes=true
+                else
+                    log WARN "Incremental analysis failed - performing full backup"
+                fi
+            fi
+            
+            # Clean up temporary export
+            rm -rf "$temp_export_dir"
+            dockExec "$container_id" "rm -rf /tmp/temp_workflows/ /tmp/temp_credentials/ /tmp/temp_workflows.json /tmp/temp_credentials.json" false || true
+        else
+            log INFO "No previous backup found - performing full initial backup"
+        fi
+    fi
+
+    # Execute workflow export (unless skipped by incremental logic)
+    if [ -n "$workflow_export_cmd" ] && ! $skip_export_due_to_no_changes; then
+        if [ -n "$ARG_WORKFLOW_ID" ] || [ "$ARG_RESTORE_TYPE" != "credentials" ]; then
+            log DEBUG "Executing workflow export: $workflow_export_cmd"
+            if ! dockExec "$container_id" "$workflow_export_cmd" false; then 
+                # Check if the error is due to no workflows or specific workflow not found
+                if [ -n "$ARG_WORKFLOW_ID" ]; then
+                    log ERROR "Failed to export workflow ID: $ARG_WORKFLOW_ID (workflow may not exist)"
+                    export_failed=true
+                elif docker exec "$container_id" n8n list workflows 2>&1 | grep -q "No workflows found"; then
+                    log INFO "No workflows found to backup - this is a clean installation"
+                    no_data_found=true
+                else
+                    log ERROR "Failed to export workflows"
+                    export_failed=true
+                fi
+            else
+                log SUCCESS "Workflow export completed successfully"
+            fi
         fi
     fi
 
     # Execute credential export
-    if [ -n "$ARG_CREDENTIAL_ID" ] || [ "$ARG_RESTORE_TYPE" != "workflows" ]; then
-        log DEBUG "Executing credential export: $credential_export_cmd"
-        if ! dockExec "$container_id" "$credential_export_cmd" false; then 
-            # Check if the error is due to no credentials or specific credential not found
-            if [ -n "$ARG_CREDENTIAL_ID" ]; then
-                log ERROR "Failed to export credential ID: $ARG_CREDENTIAL_ID (credential may not exist)"
-                export_failed=true
-            elif docker exec "$container_id" n8n list credentials 2>&1 | grep -q "No credentials found"; then
-                log INFO "No credentials found to backup - this is a clean installation"
-                no_data_found=true
+    if [ -n "$credential_export_cmd" ] && ! $skip_export_due_to_no_changes; then
+        if [ -n "$ARG_CREDENTIAL_ID" ] || [ "$ARG_RESTORE_TYPE" != "workflows" ]; then
+            log DEBUG "Executing credential export: $credential_export_cmd"
+            if ! dockExec "$container_id" "$credential_export_cmd" false; then 
+                # Check if the error is due to no credentials or specific credential not found
+                if [ -n "$ARG_CREDENTIAL_ID" ]; then
+                    log ERROR "Failed to export credential ID: $ARG_CREDENTIAL_ID (credential may not exist)"
+                    export_failed=true
+                elif docker exec "$container_id" n8n list credentials 2>&1 | grep -q "No credentials found"; then
+                    log INFO "No credentials found to backup - this is a clean installation"
+                    no_data_found=true
+                else
+                    log ERROR "Failed to export credentials"
+                    export_failed=true
+                fi
             else
-                log ERROR "Failed to export credentials"
-                export_failed=true
+                log SUCCESS "Credential export completed successfully"
             fi
-        else
-            log SUCCESS "Credential export completed successfully"
         fi
     fi
 
@@ -1251,7 +1383,11 @@ backup() {
     
     # Simple approach - we just committed changes successfully
     # So we'll push those changes now
-    cd "$tmp_dir" || { log ERROR "Failed to change to $tmp_dir"; rm -rf "$tmp_dir"; return 1; }
+    cd "$tmp_dir" || { 
+        log ERROR "Failed to change to $tmp_dir"; 
+        rm -rf "$tmp_dir"; 
+        return 1; 
+    }
     
     # Check if git log shows recent commits
     last_commit=$(git log -1 --pretty=format:"%H" 2>/dev/null)
@@ -1351,7 +1487,7 @@ restore() {
         workflow_output=$(docker exec "$container_id" n8n export:workflow --all --output=$container_pre_workflows 2>&1) || {
             if check_no_data "$workflow_output"; then
                 log INFO "No existing workflows found - this is a clean installation"
-                no_existing_data=true
+                no_data_found=true
                 # Create empty workflows file
                 echo "[]" | docker exec -i "$container_id" sh -c "cat > $container_pre_workflows"
             else
@@ -1367,7 +1503,7 @@ restore() {
             cred_output=$(docker exec "$container_id" n8n export:credentials --all --decrypted --output=$container_pre_credentials 2>&1) || {
                 if check_no_data "$cred_output"; then
                     log INFO "No existing credentials found - this is a clean installation"
-                    no_existing_data=true
+                    no_data_found=true
                     # Create empty credentials file
                     echo "[]" | docker exec -i "$container_id" sh -c "cat > $container_pre_credentials"
                 else
@@ -1824,6 +1960,169 @@ restore() {
     return 0 # Explicitly return success
 }
 
+# Helper function: Discover linked credentials from workflow JSON
+discover_linked_credentials() {
+    local workflow_json_file="$1"
+    local discovered_creds=""
+    
+    log DEBUG "Discovering linked credentials from workflow: $workflow_json_file"
+    
+    if [ ! -f "$workflow_json_file" ]; then
+        log ERROR "Workflow JSON file not found: $workflow_json_file"
+        return 1
+    fi
+    
+    # Method 1: Try with Python3 (most reliable)
+    if command_exists python3; then
+        log DEBUG "Using Python3 for credential discovery"
+        discovered_creds=$(python3 -c "
+import json, sys
+try:
+    with open('$workflow_json_file', 'r') as f:
+        data = json.load(f)
+    
+    creds = set()
+    if 'workflows' in data:
+        for workflow in data['workflows']:
+            if 'nodes' in workflow:
+                for node in workflow['nodes']:
+                    if 'credentials' in node:
+                        for cred_type, cred_info in node['credentials'].items():
+                            if 'id' in cred_info:
+                                creds.add(cred_info['id'])
+    
+    print(' '.join(creds))
+except Exception as e:
+    print(f'Error: {e}', file=sys.stderr)
+    sys.exit(1)
+" 2>/dev/null)
+    
+    # Method 2: Fallback to grep/sed (basic extraction)
+    elif command_exists grep && command_exists sed; then
+        log DEBUG "Using grep/sed for credential discovery"
+        discovered_creds=$(grep -o '"credentials":[^}]*"id":"[^"]*"' "$workflow_json_file" 2>/dev/null | \
+                          sed 's/.*"id":"\([^"]*\)".*/\1/' | \
+                          sort -u | tr '\n' ' ' | sed 's/ $//')
+    else
+        log WARN "No suitable JSON parsing tools available for credential discovery"
+        return 1
+    fi
+    
+    if [ -n "$discovered_creds" ]; then
+        log SUCCESS "Discovered linked credentials: $discovered_creds"
+        echo "$discovered_creds"
+        return 0
+    else
+        log INFO "No linked credentials found in workflow"
+        return 0
+    fi
+}
+
+# Helper function: Get changed files for incremental backup
+get_incremental_changes() {
+    local git_repo_path="$1"
+    local temp_export_path="$2"
+    local changes_list=""
+    
+    log DEBUG "Analyzing incremental changes in: $git_repo_path"
+    
+    # Check if we're in a git repository
+    if [ ! -d "$git_repo_path/.git" ]; then
+        log WARN "Not a git repository - performing full backup"
+        return 1
+    fi
+    
+    # Change to git repository directory
+    local original_pwd=$(pwd)
+    cd "$git_repo_path" || {
+        log ERROR "Failed to change to git repository: $git_repo_path"
+        return 1
+    }
+    
+    # Get last backup commit (look for commits with backup message pattern)
+    local last_backup_commit=$(git log --oneline --grep="n8n Backup" --grep="🛡️" -1 --format="%H" 2>/dev/null || echo "")
+    
+    if [ -z "$last_backup_commit" ]; then
+        log INFO "No previous backup found - performing full backup"
+        cd "$original_pwd"
+        return 1
+    fi
+    
+    log DEBUG "Last backup commit: $last_backup_commit"
+    
+    # Export current data to temporary location for comparison
+    if [ "$ARG_SEPARATE_FILES" = "true" ]; then
+        # Compare individual workflow and credential files
+        if [ -d "$temp_export_path/workflows" ]; then
+            # Get list of current workflow files
+            for workflow_file in "$temp_export_path"/workflows/*.json; do
+                [ -f "$workflow_file" ] || continue
+                local basename=$(basename "$workflow_file")
+                
+                # Check if file is new or modified
+                if ! git show "$last_backup_commit:workflows/$basename" >/dev/null 2>&1; then
+                    # New file
+                    changes_list="$changes_list workflows/$basename"
+                    log DEBUG "New workflow detected: $basename"
+                elif ! git diff --quiet "$last_backup_commit" HEAD -- "workflows/$basename" 2>/dev/null; then
+                    # Modified file (if it exists in current backup)
+                    if [ -f "workflows/$basename" ]; then
+                        changes_list="$changes_list workflows/$basename"
+                        log DEBUG "Modified workflow detected: $basename"
+                    fi
+                fi
+            done
+        fi
+        
+        if [ -d "$temp_export_path/credentials" ]; then
+            # Get list of current credential files
+            for cred_file in "$temp_export_path"/credentials/*.json; do
+                [ -f "$cred_file" ] || continue
+                local basename=$(basename "$cred_file")
+                
+                # Check if file is new or modified
+                if ! git show "$last_backup_commit:credentials/$basename" >/dev/null 2>&1; then
+                    # New file
+                    changes_list="$changes_list credentials/$basename"
+                    log DEBUG "New credential detected: $basename"
+                elif ! git diff --quiet "$last_backup_commit" HEAD -- "credentials/$basename" 2>/dev/null; then
+                    # Modified file (if it exists in current backup)
+                    if [ -f "credentials/$basename" ]; then
+                        changes_list="$changes_list credentials/$basename"
+                        log DEBUG "Modified credential detected: $basename"
+                    fi
+                fi
+            done
+        fi
+    else
+        # Compare single JSON files
+        for file in workflows.json credentials.json; do
+            if [ -f "$temp_export_path/$file" ]; then
+                if ! git show "$last_backup_commit:$file" >/dev/null 2>&1; then
+                    # New file
+                    changes_list="$changes_list $file"
+                    log DEBUG "New file detected: $file"
+                elif ! cmp -s "$temp_export_path/$file" <(git show "$last_backup_commit:$file" 2>/dev/null); then
+                    # Modified file
+                    changes_list="$changes_list $file"
+                    log DEBUG "Modified file detected: $file"
+                fi
+            fi
+        done
+    fi
+    
+    cd "$original_pwd"
+    
+    if [ -n "$changes_list" ]; then
+        log SUCCESS "Incremental changes detected: $(echo $changes_list | wc -w) files"
+        echo "$changes_list"
+        return 0
+    else
+        log INFO "No changes detected since last backup"
+        return 2  # Special return code for "no changes"
+    fi
+}
+
 # --- Main Function --- 
 main() {
     # Parse command-line arguments first
@@ -1858,6 +2157,8 @@ main() {
             # Advanced options
             --separate-files) ARG_SEPARATE_FILES=true; shift 1 ;;
             --import-as-new) ARG_IMPORT_AS_NEW=true; shift 1 ;;
+            --include-linked-creds) ARG_INCLUDE_LINKED_CREDS=true; shift 1 ;;
+            --incremental) ARG_INCREMENTAL=true; shift 1 ;;
             *) echo -e "${RED}[ERROR]${NC} Invalid option: $1" >&2; show_help; exit 1 ;; 
         esac
     done
