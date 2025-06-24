@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.27"
+VERSION="3.0.28"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -1160,13 +1160,24 @@ backup() {
         
         # For linked credentials in workflow-specific backup
         if [ -n "$ARG_WORKFLOW_ID" ] && [ "$ARG_INCLUDE_LINKED_CREDS" = "true" ]; then
-            # Note: linked credential files will be handled by the credential discovery logic above
-            # They are exported as individual files like credential_CREDID.json
-            # These files will be copied in the main copy loop
             log DEBUG "Linked credential files will be copied individually"
+            # Add individual credential files discovered by linked credential logic
+            if [ -n "$additional_credential_ids" ]; then
+                log DEBUG "Adding linked credential files to copy list: $additional_credential_ids"
+                local cred_ids_to_add="$additional_credential_ids"
+                while [ -n "$cred_ids_to_add" ]; do
+                    local cred_id="${cred_ids_to_add%% *}"  # Extract first word
+                    if [ "$cred_id" = "$cred_ids_to_add" ]; then
+                        cred_ids_to_add=""  # Last ID
+                    else
+                        cred_ids_to_add="${cred_ids_to_add#* }"  # Remove processed ID
+                    fi
+                    items_to_copy+=("credential_$cred_id.json")
+                    log DEBUG "Added credential file to copy list: credential_$cred_id.json"
+                done
+            fi
         fi
-        
-        items_to_copy+=(".env")
+        items_to_copy+=(".env")  # Add .env file
     else
         # Copy JSON files for traditional mode
         if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
