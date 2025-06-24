@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.29"
+VERSION="3.1.0"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -735,13 +735,17 @@ rollback_restore() {
     local container_credentials="/tmp/rollback_credentials.json"
     local rollback_success=true
 
-    if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]] && [ ! -f "$backup_workflows" ]; then
-        log ERROR "Pre-restore backup file workflows.json not found in $backup_dir. Cannot rollback workflows."
-        rollback_success=false
+    if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
+        if [ ! -f "$backup_workflows" ]; then
+            log ERROR "Pre-restore backup file workflows.json not found in $backup_dir. Cannot rollback workflows."
+            rollback_success=false
+        fi
     fi
-    if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]] && [ ! -f "$backup_credentials" ]; then
-        log ERROR "Pre-restore backup file credentials.json not found in $backup_dir. Cannot rollback credentials."
-        rollback_success=false
+    if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
+        if [ ! -f "$backup_credentials" ]; then
+            log ERROR "Pre-restore backup file credentials.json not found in $backup_dir. Cannot rollback credentials."
+            rollback_success=false
+        fi
     fi
     if ! $rollback_success; then return 1; fi
 
@@ -764,26 +768,26 @@ rollback_restore() {
         fi
     fi
     if $copy_failed; then 
-        dockExec "$container_id" "rm -f $container_workflows $container_credentials" "$is_dry_run" || true
+        dockExec "$container_id" "rm -f $container_workflows $container_credentials" false || true
         return 1
     fi
 
     log INFO "Importing pre-restore backup data into n8n..."
     if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
-        if ! dockExec "$container_id" "n8n import:workflow --separate --input=$container_workflows" "$is_dry_run"; then
+        if ! dockExec "$container_id" "n8n import:workflow --separate --input=$container_workflows" false; then
             log ERROR "Rollback failed during workflow import."
             rollback_success=false
         fi
     fi
     if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
-        if ! dockExec "$container_id" "n8n import:credentials --separate --input=$container_credentials" "$is_dry_run"; then
+        if ! dockExec "$container_id" "n8n import:credentials --separate --input=$container_credentials" false; then
             log ERROR "Rollback failed during credential import."
             rollback_success=false
         fi
     fi
 
     log INFO "Cleaning up rollback files in container..."
-    dockExec "$container_id" "rm -f $container_workflows $container_credentials" "$is_dry_run" || log WARN "Could not clean up rollback files in container."
+    dockExec "$container_id" "rm -f $container_workflows $container_credentials" false || log WARN "Could not clean up rollback files in container."
 
     if $rollback_success; then
         log SUCCESS "Rollback completed. n8n should be in the state before restore was attempted."
@@ -796,7 +800,7 @@ rollback_restore() {
 }
 
 backup() {
-    local container_id="$1"
+    local container="$1"
     local github_token="$2"
     local github_repo="$3"
     local branch="$4"
@@ -805,6 +809,14 @@ backup() {
 
     log HEADER "Performing Backup to GitHub"
     if $is_dry_run; then log WARN "DRY RUN MODE ENABLED - NO CHANGES WILL BE MADE"; fi
+
+    # Validate incremental + dated compatibility
+    if $ARG_INCREMENTAL && $use_dated_backup; then
+        log ERROR "Incremental backup (--incremental) is not compatible with dated backup (--dated)."
+        log ERROR "Please use either --incremental OR --dated, but not both."
+        log ERROR "Suggestion: Use --incremental for frequent backups, --dated for milestone backups."
+        return 1
+    fi
 
     local tmp_dir
     tmp_dir=$(mktemp -d -t n8n-backup-XXXXXXXXXX)
@@ -849,303 +861,179 @@ backup() {
     fi
     log SUCCESS "Git repository initialized and branch '$branch' checked out."
 
-    # --- Export Data --- 
+    # Export n8n data
     log INFO "Exporting data from n8n container..."
-    local export_failed=false
-    local no_data_found=false
 
-    # Determine export strategy based on flags
-    local workflow_export_cmd=""
-    local credential_export_cmd=""
+    # Determine if using separate files mode
     local using_separate_files=false
-    
-    # Check if we're using separate files mode
-    if [ "$ARG_SEPARATE_FILES" = "true" ] || [ "$CONF_SEPARATE_FILES" = "true" ]; then
+    if $ARG_SEPARATE_FILES; then
         using_separate_files=true
         log INFO "Using separate files mode (git-friendly)"
     fi
-    
-    # Build workflow export command
+
+    # Export workflow(s)
     if [ -n "$ARG_WORKFLOW_ID" ]; then
         log INFO "Exporting specific workflow ID: $ARG_WORKFLOW_ID"
-        if $using_separate_files; then
-            workflow_export_cmd="n8n export:workflow --id=$ARG_WORKFLOW_ID --pretty --output=/tmp/workflow_$ARG_WORKFLOW_ID.json"
+        if ! $is_dry_run; then
+            if ! dockExec "$container" "n8n export:workflow --id=$ARG_WORKFLOW_ID --output=/tmp/workflow_$ARG_WORKFLOW_ID.json"; then
+                log ERROR "Failed to export workflow $ARG_WORKFLOW_ID"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
         else
-            workflow_export_cmd="n8n export:workflow --id=$ARG_WORKFLOW_ID --output=$container_workflows"
+            log DRYRUN "Would export workflow ID: $ARG_WORKFLOW_ID"
         fi
     else
-        log INFO "Exporting all workflows"
         if $using_separate_files; then
-            workflow_export_cmd="n8n export:workflow --backup --output=/tmp/workflows/"
+            log INFO "Exporting all workflows in separate files"
+            if ! $is_dry_run; then
+                if ! dockExec "$container" "n8n export:workflow --backup --output=/tmp/workflows/"; then
+                    log ERROR "Failed to export workflows"
+                    rm -rf "$tmp_dir"
+                    return 1
+                fi
+            else
+                log DRYRUN "Would export all workflows to separate files"
+            fi
         else
-            workflow_export_cmd="n8n export:workflow --all --output=$container_workflows"
+            log INFO "Exporting all workflows"
+            if ! $is_dry_run; then
+                if ! dockExec "$container" "n8n export:workflow --output=$container_workflows"; then
+                    log ERROR "Failed to export workflows"
+                    rm -rf "$tmp_dir"
+                    return 1
+                fi
+            else
+                log DRYRUN "Would export all workflows to single file"
+            fi
         fi
     fi
-    
-    # Build credential export command  
+
+    # Auto-discover linked credentials if workflow ID specified
+    local additional_credential_ids=""
+    if [ -n "$ARG_WORKFLOW_ID" ] && $ARG_INCLUDE_LINKED_CREDS; then
+        log INFO "Auto-discovering linked credentials for workflow ID: $ARG_WORKFLOW_ID"
+        if ! $is_dry_run; then
+            additional_credential_ids=$(discover_linked_credentials "$container" "$ARG_WORKFLOW_ID" "$tmp_dir")
+            if [ -n "$additional_credential_ids" ]; then
+                log SUCCESS "Found linked credentials: $additional_credential_ids"
+            else
+                log INFO "No linked credentials found for workflow $ARG_WORKFLOW_ID"
+            fi
+        else
+            log DRYRUN "Would discover linked credentials for workflow $ARG_WORKFLOW_ID"
+        fi
+    fi
+
+    # Export credential(s)
     if [ -n "$ARG_CREDENTIAL_ID" ]; then
         log INFO "Exporting specific credential ID: $ARG_CREDENTIAL_ID"
-        if $using_separate_files; then
-            credential_export_cmd="n8n export:credentials --id=$ARG_CREDENTIAL_ID --decrypted --pretty --output=/tmp/credential_$ARG_CREDENTIAL_ID.json"
+        if ! $is_dry_run; then
+            if ! dockExec "$container" "n8n export:credentials --id=$ARG_CREDENTIAL_ID --decrypted --pretty --output=/tmp/credential_$ARG_CREDENTIAL_ID.json"; then
+                log ERROR "Failed to export credential $ARG_CREDENTIAL_ID"
+                rm -rf "$tmp_dir"
+                return 1
+            fi
         else
-            credential_export_cmd="n8n export:credentials --id=$ARG_CREDENTIAL_ID --decrypted --output=$container_credentials"
+            log DRYRUN "Would export credential ID: $ARG_CREDENTIAL_ID"
         fi
+    elif [ -n "$additional_credential_ids" ]; then
+        # Export individual linked credentials
+        log DEBUG "Processing credential IDs: $additional_credential_ids" >&2
+        local remaining_creds="$additional_credential_ids"
+        while [ -n "$remaining_creds" ]; do
+            local cred_id="${remaining_creds%% *}"
+            log DEBUG "Exporting individual credential ID: $cred_id" >&2
+            local cmd="n8n export:credentials --id=$cred_id --decrypted --pretty --output=/tmp/credential_$cred_id.json"
+            log DEBUG "Command: $cmd" >&2
+            if ! $is_dry_run; then
+                if ! dockExec "$container" "$cmd"; then
+                    log ERROR "Failed to export credential $cred_id"
+                    rm -rf "$tmp_dir"
+                    return 1
+                fi
+            else
+                log DRYRUN "Would export credential ID: $cred_id"
+            fi
+            
+            # Remove processed credential from list
+            if [ "$remaining_creds" = "$cred_id" ]; then
+                remaining_creds=""
+            else
+                remaining_creds="${remaining_creds#* }"
+            fi
+        done
     else
         log INFO "Exporting all credentials"
         if $using_separate_files; then
-            credential_export_cmd="n8n export:credentials --backup --decrypted --output=/tmp/credentials/"
-        else
-            credential_export_cmd="n8n export:credentials --all --decrypted --output=$container_credentials"
-        fi
-    fi
-
-    # --- Advanced Feature Integration ---
-    
-    # Feature 1: Auto-include linked credentials for specific workflow backup
-    local additional_credential_ids=""
-    if [ -n "$ARG_WORKFLOW_ID" ] && [ "$ARG_INCLUDE_LINKED_CREDS" = "true" ]; then
-        log INFO "Auto-discovering linked credentials for workflow ID: $ARG_WORKFLOW_ID"
-        
-        # First export the workflow to discover linked credentials
-        local temp_workflow_file="/tmp/temp_workflow_for_creds.json"
-        local temp_export_cmd="n8n export:workflow --id=$ARG_WORKFLOW_ID --output=$temp_workflow_file"
-        
-        if dockExec "$container_id" "$temp_export_cmd" false; then
-            # Copy the workflow file to host for analysis
-            local host_temp_workflow="$tmp_dir/temp_workflow.json"
-            if docker cp "$container_id:$temp_workflow_file" "$host_temp_workflow"; then
-                # Discover linked credentials
-                if additional_credential_ids=$(discover_linked_credentials "$host_temp_workflow"); then
-                    if [ -n "$additional_credential_ids" ]; then
-                        log SUCCESS "Found linked credentials: $additional_credential_ids"
-                        # Update credential export command to include discovered credentials
-                        if $using_separate_files; then
-                            # For separate files, export each credential individually
-                            local cred_ids_to_process="$additional_credential_ids"
-                            log DEBUG "Processing credential IDs: $cred_ids_to_process"
-                            
-                            # Process each credential ID individually
-                            while [ -n "$cred_ids_to_process" ]; do
-                                # Extract first credential ID
-                                local cred_id="${cred_ids_to_process%% *}"  # Get first word
-                                if [ "$cred_id" = "$cred_ids_to_process" ]; then
-                                    # Last credential ID
-                                    cred_ids_to_process=""
-                                else
-                                    # Remove processed ID from the list
-                                    cred_ids_to_process="${cred_ids_to_process#* }"
-                                fi
-                                
-                                # Export this individual credential
-                                local extra_cred_cmd="n8n export:credentials --id=$cred_id --decrypted --pretty --output=/tmp/credential_$cred_id.json"
-                                log DEBUG "Exporting individual credential ID: $cred_id"
-                                log DEBUG "Command: $extra_cred_cmd"
-                                dockExec "$container_id" "$extra_cred_cmd" false || log WARN "Failed to export linked credential ID: $cred_id"
-                            done
-                        else
-                            # For single file, modify the credential export to include specific IDs
-                            local all_cred_ids="$additional_credential_ids"
-                            if [ -n "$ARG_CREDENTIAL_ID" ]; then
-                                all_cred_ids="$ARG_CREDENTIAL_ID $additional_credential_ids"
-                            fi
-                            # Build export command for multiple specific credentials
-                            credential_export_cmd="n8n export:credentials --decrypted --output=$container_credentials"
-                            local cred_ids_to_process="$all_cred_ids"
-                            log DEBUG "Building credential export command for IDs: $cred_ids_to_process"
-                            
-                            # Process each credential ID individually to build command
-                            while [ -n "$cred_ids_to_process" ]; do
-                                # Extract first credential ID
-                                local cred_id="${cred_ids_to_process%% *}"  # Get first word
-                                if [ "$cred_id" = "$cred_ids_to_process" ]; then
-                                    # Last credential ID
-                                    cred_ids_to_process=""
-                                else
-                                    # Remove processed ID from the list
-                                    cred_ids_to_process="${cred_ids_to_process#* }"
-                                fi
-                                credential_export_cmd="$credential_export_cmd --id=$cred_id"
-                                log DEBUG "Added credential ID to command: $cred_id"
-                            done
-                        fi
-                    else
-                        log INFO "No linked credentials found for this workflow"
-                    fi
-                else
-                    log WARN "Failed to discover linked credentials"
-                fi
-                # Clean up temp file
-                rm -f "$host_temp_workflow"
-            else
-                log WARN "Failed to copy workflow file for credential discovery"
-            fi
-            # Clean up container temp file
-            dockExec "$container_id" "rm -f $temp_workflow_file" false || true
-        else
-            log WARN "Failed to export workflow for credential discovery"
-        fi
-    fi
-    
-    # Feature 2: Incremental backup logic
-    local incremental_files_to_export=""
-    local skip_export_due_to_no_changes=false
-    if [ "$ARG_INCREMENTAL" = "true" ]; then
-        log INFO "Performing incremental backup analysis..."
-        
-        # Only proceed with incremental if we have an existing git repository
-        if $branch_exists; then
-            # Create temporary export to compare against
-            local temp_export_dir="$tmp_dir/temp_export"
-            mkdir -p "$temp_export_dir"
-            
-            # Export current data to temporary location for comparison
-            local temp_workflows_file="$temp_export_dir/workflows.json"
-            local temp_credentials_file="$temp_export_dir/credentials.json"
-            
-            if $using_separate_files; then
-                # Export to separate files for comparison
-                dockExec "$container_id" "n8n export:workflow --backup --output=/tmp/temp_workflows/" false || true
-                dockExec "$container_id" "n8n export:credentials --backup --decrypted --output=/tmp/temp_credentials/" false || true
-                docker cp "$container_id:/tmp/temp_workflows/" "$temp_export_dir/" 2>/dev/null || true
-                docker cp "$container_id:/tmp/temp_credentials/" "$temp_export_dir/" 2>/dev/null || true
-            else
-                # Export to single files for comparison
-                dockExec "$container_id" "n8n export:workflow --all --output=/tmp/temp_workflows.json" false || true
-                dockExec "$container_id" "n8n export:credentials --all --decrypted --output=/tmp/temp_credentials.json" false || true
-                docker cp "$container_id:/tmp/temp_workflows.json" "$temp_workflows_file" 2>/dev/null || true
-                docker cp "$container_id:/tmp/temp_credentials.json" "$temp_credentials_file" 2>/dev/null || true
-            fi
-            
-            # Analyze incremental changes
-            if incremental_files_to_export=$(get_incremental_changes "$tmp_dir" "$temp_export_dir"); then
-                log SUCCESS "Incremental analysis completed. Changed files: $incremental_files_to_export"
-                
-                # Filter export commands based on what has actually changed
-                if ! echo "$incremental_files_to_export" | grep -q "workflow"; then
-                    log INFO "No workflow changes detected - skipping workflow export"
-                    workflow_export_cmd=""
-                fi
-                if ! echo "$incremental_files_to_export" | grep -q "credential"; then
-                    log INFO "No credential changes detected - skipping credential export"
-                    credential_export_cmd=""
-                fi
-                
-                # Check if any exports are still needed
-                if [ -z "$workflow_export_cmd" ] && [ -z "$credential_export_cmd" ]; then
-                    log INFO "No changes detected since last backup - skipping export"
-                    skip_export_due_to_no_changes=true
-                fi
-            else
-                local incremental_exit_code=$?
-                if [ $incremental_exit_code -eq 2 ]; then
-                    log INFO "No changes detected since last backup"
-                    skip_export_due_to_no_changes=true
-                else
-                    log WARN "Incremental analysis failed - performing full backup"
-                fi
-            fi
-            
-            # Clean up temporary export
-            rm -rf "$temp_export_dir"
-            dockExec "$container_id" "rm -rf /tmp/temp_workflows/ /tmp/temp_credentials/ /tmp/temp_workflows.json /tmp/temp_credentials.json" false || true
-        else
-            log INFO "No previous backup found - performing full initial backup"
-        fi
-    fi
-
-    # Execute workflow export (unless skipped by incremental logic)
-    if [ -n "$workflow_export_cmd" ] && ! $skip_export_due_to_no_changes; then
-        if [ -n "$ARG_WORKFLOW_ID" ] || [ "$ARG_RESTORE_TYPE" != "credentials" ]; then
-            log DEBUG "Executing workflow export: $workflow_export_cmd"
-            if ! dockExec "$container_id" "$workflow_export_cmd" false; then 
-                # Check if the error is due to no workflows or specific workflow not found
-                if [ -n "$ARG_WORKFLOW_ID" ]; then
-                    log ERROR "Failed to export workflow ID: $ARG_WORKFLOW_ID (workflow may not exist)"
-                    export_failed=true
-                elif docker exec "$container_id" n8n list workflows 2>&1 | grep -q "No workflows found"; then
-                    log INFO "No workflows found to backup - this is a clean installation"
-                    no_data_found=true
-                else
-                    log ERROR "Failed to export workflows"
-                    export_failed=true
-                fi
-            else
-                log SUCCESS "Workflow export completed successfully"
-            fi
-        fi
-    fi
-
-    # Execute credential export
-    if [ -n "$credential_export_cmd" ] && ! $skip_export_due_to_no_changes; then
-        if [ -n "$ARG_CREDENTIAL_ID" ] || [ "$ARG_RESTORE_TYPE" != "workflows" ]; then
-            log DEBUG "Executing credential export: $credential_export_cmd"
-            if ! dockExec "$container_id" "$credential_export_cmd" false; then 
-                # Check if the error is due to no credentials or specific credential not found
-                if [ -n "$ARG_CREDENTIAL_ID" ]; then
-                    log ERROR "Failed to export credential ID: $ARG_CREDENTIAL_ID (credential may not exist)"
-                    export_failed=true
-                elif docker exec "$container_id" n8n list credentials 2>&1 | grep -q "No credentials found"; then
-                    log INFO "No credentials found to backup - this is a clean installation"
-                    no_data_found=true
-                else
+            if ! $is_dry_run; then
+                if ! dockExec "$container" "n8n export:credentials --backup --decrypted --output=/tmp/credentials/"; then
                     log ERROR "Failed to export credentials"
-                    export_failed=true
+                    rm -rf "$tmp_dir"
+                    return 1
                 fi
             else
-                log SUCCESS "Credential export completed successfully"
+                log DRYRUN "Would export all credentials to separate files"
+            fi
+        else
+            if ! $is_dry_run; then
+                if ! dockExec "$container" "n8n export:credentials --decrypted --output=$container_credentials"; then
+                    log ERROR "Failed to export credentials"
+                    rm -rf "$tmp_dir"
+                    return 1
+                fi
+            else
+                log DRYRUN "Would export all credentials to single file"
             fi
         fi
     fi
 
-    if $export_failed; then
-        log ERROR "Failed to export data from n8n"
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-
-    # Handle environment variables
-    if ! dockExec "$container_id" "printenv | grep ^N8N_ > $container_env" false; then
-        log WARN "Could not capture N8N_ environment variables from container."
-    fi
-
-    # If no data was found, create empty files to maintain backup structure
-    if $no_data_found; then
-        log INFO "Creating empty backup files for clean installation..."
-        if ! docker exec "$container_id" test -f "$container_workflows"; then
-            echo "[]" | docker exec -i "$container_id" sh -c "cat > $container_workflows"
-        fi
-        if ! docker exec "$container_id" test -f "$container_credentials"; then
-            echo "[]" | docker exec -i "$container_id" sh -c "cat > $container_credentials"
-        fi
-    fi
-
-    # --- Determine Target Directory and Copy --- 
-    local target_dir="$tmp_dir"
-    local backup_timestamp=""
-    if [ "$use_dated_backup" = "true" ]; then
-        backup_timestamp="backup_$(timestamp)"
-        target_dir="${tmp_dir}/${backup_timestamp}"
-        log INFO "Using dated backup directory: $backup_timestamp"
-        if [ "$is_dry_run" = "true" ]; then
-            log DRYRUN "Would create directory: $target_dir"
-        elif ! mkdir -p "$target_dir"; then
-            log ERROR "Failed to create dated backup directory: $target_dir"
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-    fi
-
-    log INFO "Copying exported files from container into Git directory..."
-    
-    # Create backup directory structure
-    local backup_dir="$tmp_dir"
-    if $use_dated_backup; then
-        backup_dir="$tmp_dir/backup_$(timestamp)"
+    # Incremental backup analysis
+    local incremental_changes=""
+    if $ARG_INCREMENTAL; then
+        log INFO "Performing incremental backup analysis..."
         if ! $is_dry_run; then
-            mkdir -p "$backup_dir"
+            incremental_changes=$(get_incremental_changes "$container" "$tmp_dir")
+            if [ "$incremental_changes" = "no_changes" ]; then
+                log INFO "No changes detected since last backup"
+                # Clean up and exit
+                if ! $is_dry_run; then
+                    dockExec "$container" "rm -rf /tmp/temp_workflows/ /tmp/temp_credentials/ /tmp/temp_workflows.json /tmp/temp_credentials.json" 2>/dev/null || true
+                fi
+                rm -rf "$tmp_dir"
+                return 0
+            else
+                log INFO "Changes detected: $incremental_changes"
+            fi
         else
-            log DRYRUN "Would create dated backup directory: $backup_dir"
+            log DRYRUN "Would perform incremental backup analysis"
         fi
+    fi
+
+    # Export environment variables
+    if ! $is_dry_run; then
+        if ! dockExec "$container" "printenv | grep ^N8N_ > $container_env"; then
+            log WARN "Failed to export N8N environment variables (container might not have any)"
+        fi
+    else
+        log DRYRUN "Would export N8N environment variables"
+    fi
+
+    # Create global backup directory structure: /Backups/{Dated|data}/
+    local backup_base_dir="$tmp_dir/Backups"
+    local backup_dir
+    if $use_dated_backup; then
+        backup_dir="$backup_base_dir/Dated/backup_$(timestamp)"
+        log INFO "Using dated backup directory: Backups/Dated/backup_$(timestamp)"
+    else
+        backup_dir="$backup_base_dir/data"
+        log INFO "Using standard backup directory: Backups/data"
+    fi
+    
+    if ! $is_dry_run; then
+        mkdir -p "$backup_dir"
+    else
+        log DRYRUN "Would create backup directory: $backup_dir"
     fi
     
     # Create proper subdirectories for separate files mode
@@ -1155,6 +1043,8 @@ backup() {
         log DEBUG "Created subdirectories: workflows/, credentials/"
     fi
 
+    log INFO "Copying exported files from container into Git directory..."
+    
     # Determine items to copy with correct paths
     local items_to_copy=()
     
@@ -1163,7 +1053,8 @@ backup() {
         if [ -n "$ARG_WORKFLOW_ID" ]; then
             items_to_copy+=("workflow_$ARG_WORKFLOW_ID.json:workflows/workflow_$ARG_WORKFLOW_ID.json")
         else
-            items_to_copy+=("workflows/:workflows/")
+            # Copy individual workflow files from /tmp/workflows/ to workflows/ (avoiding duplication)
+            items_to_copy+=("workflows:workflows")
         fi
         
         if [ -n "$ARG_CREDENTIAL_ID" ]; then
@@ -1185,7 +1076,8 @@ backup() {
                 fi
             done
         else
-            items_to_copy+=("credentials/:credentials/")
+            # Copy individual credential files from /tmp/credentials/ to credentials/ (avoiding duplication)
+            items_to_copy+=("credentials:credentials")
         fi
         items_to_copy+=(".env:.env")  # .env stays in root
     else
@@ -1199,260 +1091,193 @@ backup() {
         items_to_copy+=(".env:.env")
     fi
 
-    # Copy files with proper directory structure
-    for item in "${items_to_copy[@]}"; do
-        local src_path="${item%%:*}"
-        local dest_path="${item##*:}"
-        local container_src_path="/tmp/$src_path"
-        local backup_dest_path="$backup_dir/$dest_path"
-        
-        if $is_dry_run; then
-            log DRYRUN "Would copy $container_src_path to $backup_dest_path"
-        else
-            log DEBUG "Copying $container_src_path to $backup_dest_path"
-            if [[ "$src_path" == */ ]]; then
-                # Directory copy
-                if ! docker cp "${container_id}:${container_src_path%/}" "${backup_dest_path%/}"; then
-                    log WARN "Failed to copy directory: $src_path (may not exist)"
+    # Copy files from container to backup directory
+    if ! $is_dry_run; then
+        for item in "${items_to_copy[@]}"; do
+            local src_path="${item%%:*}"
+            local dest_path="${item##*:}"
+            local full_dest_path="$backup_dir/$dest_path"
+            
+            log DEBUG "Copying /tmp/$src_path to $full_dest_path"
+            
+            # Ensure destination directory exists
+            if [[ "$dest_path" == *"/"* ]]; then
+                local dest_dir="${dest_path%/*}"
+                mkdir -p "$backup_dir/$dest_dir"
+            fi
+            
+            # Handle directory copying differently to avoid duplication
+            if [[ "$src_path" == "workflows" ]] || [[ "$src_path" == "credentials" ]]; then
+                # For directories, copy contents to avoid creating nested subdirectories
+                local temp_dir=$(mktemp -d)
+                if docker cp "$container:/tmp/$src_path" "$temp_dir/" 2>/dev/null; then
+                    # Copy the contents of the extracted directory to the destination
+                    if [ -d "$temp_dir/$src_path" ]; then
+                        cp -r "$temp_dir/$src_path"/* "$backup_dir/$dest_path/" 2>/dev/null || true
+                    fi
+                    rm -rf "$temp_dir"
+                else
+                    log WARN "Failed to copy $src_path directory (might not exist)"
                 fi
             else
-                # File copy
-                if ! docker cp "${container_id}:${container_src_path}" "$backup_dest_path"; then
-                    log WARN "Failed to copy file: $src_path (may not exist)"
+                # For individual files, use normal docker cp
+                if ! docker cp "$container:/tmp/$src_path" "$full_dest_path" 2>/dev/null; then
+                    log WARN "Failed to copy $src_path (might not exist)"
                 fi
             fi
-        fi
-    done
+        done
+    else
+        log DRYRUN "Would copy the following files:"
+        for item in "${items_to_copy[@]}"; do
+            local src_path="${item%%:*}"
+            local dest_path="${item##*:}"
+            log DRYRUN "  /tmp/$src_path -> $backup_dir/$dest_path"
+        done
+    fi
 
+    # Clean up temporary files in container
     log INFO "Cleaning up temporary files in container..."
-    dockExec "$container_id" "rm -f $container_workflows $container_credentials $container_env" "$is_dry_run" || log WARN "Could not clean up temporary files in container."
-
-    # --- Git Commit and Push --- 
-    log INFO "Adding files to Git..."
-    
-    if $is_dry_run; then
-        if $use_dated_backup; then
-            log DRYRUN "Would add dated backup directory '$backup_timestamp' to Git index"
-        else
-            log DRYRUN "Would add all files to Git index"
+    if ! $is_dry_run; then
+        dockExec "$container" "rm -f $container_workflows $container_credentials $container_env" 2>/dev/null || true
+        if $using_separate_files; then
+            dockExec "$container" "rm -rf /tmp/workflows/ /tmp/credentials/" 2>/dev/null || true
+        fi
+        if [ -n "$ARG_WORKFLOW_ID" ]; then
+            dockExec "$container" "rm -f /tmp/workflow_$ARG_WORKFLOW_ID.json" 2>/dev/null || true
+        fi
+        if [ -n "$ARG_CREDENTIAL_ID" ]; then
+            dockExec "$container" "rm -f /tmp/credential_$ARG_CREDENTIAL_ID.json" 2>/dev/null || true
+        fi
+        if [ -n "$additional_credential_ids" ]; then
+            local remaining_creds="$additional_credential_ids"
+            while [ -n "$remaining_creds" ]; do
+                local cred_id="${remaining_creds%% *}"
+                dockExec "$container" "rm -f /tmp/credential_$cred_id.json" 2>/dev/null || true
+                
+                if [ "$remaining_creds" = "$cred_id" ]; then
+                    remaining_creds=""
+                else
+                    remaining_creds="${remaining_creds#* }"
+                fi
+            done
         fi
     else
-        # Change to the git directory to avoid parsing issues
-        cd "$tmp_dir" || { 
-            log ERROR "Failed to change to git directory for add operation"; 
-            rm -rf "$tmp_dir"; 
-            return 1; 
-        }
+        log DRYRUN "Would clean up temporary files in container"
+    fi
+
+    # Add files to Git
+    log INFO "Adding files to Git..."
+    if ! $is_dry_run; then
+        log DEBUG "Adding Backups directory"
+        if ! git -C "$tmp_dir" add Backups/ 2>/dev/null; then
+            log ERROR "Failed to add backup files to Git"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
         
-        if [ "$use_dated_backup" = "true" ] && [ -n "$backup_timestamp" ] && [ -d "$backup_timestamp" ]; then
-            log DEBUG "Adding dated backup directory: $backup_timestamp"
-            
-            # First list what's in the directory (for debugging)
-            log DEBUG "Files in backup directory:"
-            ls -la "$backup_timestamp" || true
-            
-            # Add specific directory
-            if ! git add "$backup_timestamp"; then
-                log ERROR "Git add failed for dated backup directory"
-                cd - > /dev/null || true
+        log DEBUG "Files in backup directory:"
+        ls -la "$backup_dir" 2>/dev/null || log WARN "Backup directory listing failed"
+        
+        log DEBUG "Staging status:"
+        git -C "$tmp_dir" status --porcelain 2>/dev/null || log WARN "Git status failed"
+    else
+        log DRYRUN "Would add backup files to Git"
+    fi
+
+    # Commit changes
+    log INFO "Committing changes..."
+    if ! $is_dry_run; then
+        log DEBUG "Creating timestamp file to ensure backup uniqueness"
+        echo "$(timestamp)" > "$tmp_dir/.n8n-backup-timestamp"
+        
+        log DEBUG "Adding all n8n files to Git..."
+        if ! git -C "$tmp_dir" add . 2>/dev/null; then
+            log ERROR "Failed to add files to Git"
+            rm -rf "$tmp_dir"
+            return 1
+        fi
+        
+        log DEBUG "Adding Backups directory"
+        git -C "$tmp_dir" add Backups/ 2>/dev/null || true
+        
+        log DEBUG "Files in backup directory:"
+        ls -la "$backup_dir" 2>/dev/null || log WARN "Backup directory listing failed"
+        
+        # Get n8n version for commit message
+        local n8n_ver="unknown"
+        n8n_ver=$(dockExec "$container" "n8n --version" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -n1) || n8n_ver="unknown"
+        
+        local backup_type="full"
+        if [ -n "$ARG_WORKFLOW_ID" ]; then
+            backup_type="workflow-specific"
+        elif [ -n "$ARG_CREDENTIAL_ID" ]; then
+            backup_type="credential-specific"
+        elif $ARG_INCREMENTAL; then
+            backup_type="incremental"
+        fi
+        
+        local backup_identifier
+        if $use_dated_backup; then
+            backup_identifier="[Backups/Dated/backup_$(timestamp)]"
+        else
+            backup_identifier="[Backups/data]"
+        fi
+        
+        local commit_message="🛡️ n8n Backup (v$n8n_ver) - $(timestamp) $backup_identifier"
+        if [ "$backup_type" != "full" ]; then
+            commit_message="$commit_message ($backup_type)"
+        fi
+        
+        log DEBUG "Committing backup with message: $commit_message"
+        
+        if ! git -C "$tmp_dir" commit -m "$commit_message" 2>/dev/null; then
+            log WARN "Git commit failed or no changes to commit"
+            # Check if there are actually changes
+            if git -C "$tmp_dir" diff --cached --quiet 2>/dev/null; then
+                log INFO "No changes detected - backup already up to date"
+                rm -rf "$tmp_dir"
+                return 0
+            else
+                log ERROR "Git commit failed with changes present"
                 rm -rf "$tmp_dir"
                 return 1
             fi
-        else
-            # Standard repo-root backup
-            log DEBUG "Adding files at repository root"
-            
-            # Check if we're using separate files mode
-            local separate_files_mode=false
-            if [ "$ARG_SEPARATE_FILES" = "true" ] || [ "$CONF_SEPARATE_FILES" = "true" ]; then
-                separate_files_mode=true
-                log DEBUG "Separate files mode detected for Git operations"
-            fi
-            
-            if $separate_files_mode; then
-                # Add separate files directories and timestamp
-                local git_add_cmd="git add ./backup_timestamp.txt"
-                
-                # Add workflows directory if it exists
-                if [ -d "workflows" ]; then
-                    git_add_cmd="$git_add_cmd workflows/"
-                    log DEBUG "Adding workflows directory to Git"
-                fi
-                
-                # Add credentials directory if it exists
-                if [ -d "credentials" ]; then
-                    git_add_cmd="$git_add_cmd credentials/"
-                    log DEBUG "Adding credentials directory to Git"
-                fi
-                
-                # Add .env file if it exists
-                if [ -f ".env" ]; then
-                    git_add_cmd="$git_add_cmd .env"
-                fi
-                
-                if ! eval "$git_add_cmd"; then
-                    log ERROR "Git add failed for separate files mode"
-                    cd - > /dev/null || true
-                    return 1
-                fi
-            else
-                # Standard JSON files mode
-                log DEBUG "Adding individual files to Git"
-                if ! git add ./backup_timestamp.txt workflows.json credentials.json .env 2>/dev/null; then
-                    log ERROR "Git add failed for repository root files"
-                    cd - > /dev/null || true
-                    return 1
-                fi
-            fi
         fi
+    else
+        log DRYRUN "Would commit backup with timestamped message"
     fi
-    
-    log DEBUG "Staging status:"
-    git status --short || true
 
-    # --- Commit Logic --- 
-    local commit_status="pending" # Use string instead of boolean to avoid empty command errors
-    log INFO "Committing changes..."
-    
-    # Create a timestamp with seconds to ensure uniqueness
-    local backup_time=$(date +"%Y-%m-%d_%H-%M-%S")
-    
-    # Get n8n version from container (optional, fallback to generic message if unavailable)
-    local n8n_ver=""
-    if n8n_ver=$(docker exec "$container_id" n8n --version 2>/dev/null | head -n1 | grep -o '[0-9]\+\.[0-9]\+\.[0-9]\+' | head -n1); then
-        local commit_msg="🛡️ n8n Backup (v$n8n_ver) - $backup_time"
-    else
-        local commit_msg="🛡️ n8n Backup - $backup_time"
-    fi
-    
-    if [ "$use_dated_backup" = "true" ]; then
-        commit_msg="$commit_msg [$backup_timestamp]"
-    fi
-    
-    # Ensure git identity is configured (important for non-interactive mode)
-    # This is crucial according to developer notes about Git user identity
-    if [[ -z "$(git config user.email 2>/dev/null)" ]]; then
-        log WARN "No Git user.email configured, setting default"
-        git config user.email "n8n-backup-script@localhost" || true
-    fi
-    if [[ -z "$(git config user.name 2>/dev/null)" ]]; then
-        log WARN "No Git user.name configured, setting default"
-        git config user.name "n8n Backup Script" || true
-    fi
-    
-    # Force Git to commit by adding a timestamp file to make each backup unique
-    log DEBUG "Creating timestamp file to ensure backup uniqueness"
-    echo "Backup generated at: $backup_time" > "./backup_timestamp.txt"
-    
-    # Explicitly add all n8n files AND the timestamp file
-    log DEBUG "Adding all n8n files to Git..."
-    if [ "$use_dated_backup" = "true" ] && [ -n "$backup_timestamp" ] && [ -d "$backup_timestamp" ]; then
-        log DEBUG "Adding dated backup directory: $backup_timestamp"
-        
-        # First list what's in the directory (for debugging)
-        log DEBUG "Files in backup directory:"
-        ls -la "$backup_timestamp" || true
-        
-        # Add specific directory
-        if ! git add "$backup_timestamp" ./backup_timestamp.txt; then
-            log ERROR "Failed to add dated backup directory"
-            cd - > /dev/null || true
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-    else
-        # Standard repo-root backup
-        log DEBUG "Adding individual files to Git"
-        if ! git add ./backup_timestamp.txt workflows.json credentials.json .env 2>/dev/null; then
-            log ERROR "Failed to add n8n files"
-            cd - > /dev/null || true
-            return 1
-        fi
-    fi
-    
-    log DEBUG "Committing backup with message: $commit_msg"
-    if [ "$is_dry_run" = "true" ]; then
-        log DRYRUN "Would commit with message: $commit_msg"
-        commit_status="success" # Assume commit would happen in dry run
-    else
-        # Force the commit with --allow-empty to ensure it happens
-        if git commit --allow-empty -m "$commit_msg" 2>/dev/null; then
-            commit_status="success" # Set flag to indicate commit success
-        else
-            log ERROR "Git commit failed"
-            # Show detailed output in case of failure
-            git status || true
-            cd - > /dev/null || true
-            rm -rf "$tmp_dir"
-            return 1
-        fi
-    fi
-    
-    # We'll maintain the directory change until after push completes in the next section
-
-    # --- Push Logic --- 
+    # Push to GitHub
     log INFO "Pushing backup to GitHub repository '$github_repo' branch '$branch'..."
-    
-    if [ "$is_dry_run" = "true" ]; then
-        log DRYRUN "Would push branch '$branch' to origin"
-        return 0
-    fi
-    
-    # Simple approach - we just committed changes successfully
-    # So we'll push those changes now
-    cd "$tmp_dir" || { 
-        log ERROR "Failed to change to $tmp_dir"; 
-        rm -rf "$tmp_dir"; 
-        return 1; 
-    }
-    
-    # Check if git log shows recent commits
-    last_commit=$(git log -1 --pretty=format:"%H" 2>/dev/null || echo "")
-    
-    if [ -z "$last_commit" ]; then
-        log ERROR "No commits found to push"
-        cd - > /dev/null || true
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-    
-    log DEBUG "Pushing commit $last_commit to origin/$branch"
-    
-    # Use a direct git command with full output
-    if ! git push -u origin "$branch" --verbose; then
-        log ERROR "Failed to push to GitHub - connectivity issue or permissions problem"
+    if ! $is_dry_run; then
+        local commit_hash
+        commit_hash=$(git -C "$tmp_dir" rev-parse HEAD 2>/dev/null)
+        log DEBUG "Pushing commit $commit_hash to origin/$branch"
         
-        # Test GitHub connectivity
-        if ! curl -s -I "https://github.com" > /dev/null; then
-            log ERROR "Cannot reach GitHub - network connectivity issue"
-        elif ! curl -s -H "Authorization: token $github_token" "https://api.github.com/user" | grep -q login; then
-            log ERROR "GitHub API authentication failed - check token permissions"
-        else
-            log ERROR "Unknown error pushing to GitHub"
+        if ! git -C "$tmp_dir" push origin "$branch" 2>/dev/null; then
+            log ERROR "Failed to push backup to GitHub"
+            rm -rf "$tmp_dir"
+            return 1
         fi
-        
-        cd - > /dev/null || true
-        rm -rf "$tmp_dir"
-        return 1
-    fi
-    
-    log SUCCESS "Backup successfully pushed to GitHub repository"
-    cd - > /dev/null || true
-
-    log INFO "Cleaning up host temporary directory..."
-    if $is_dry_run; then
-        log DRYRUN "Would remove temporary directory: $tmp_dir"
+        log SUCCESS "Backup successfully pushed to GitHub repository"
     else
-        rm -rf "$tmp_dir"
+        log DRYRUN "Would push backup to GitHub repository '$github_repo' branch '$branch'"
     fi
 
-    log SUCCESS "Backup successfully completed and pushed to GitHub."
-    if $is_dry_run; then log WARN "(Dry run mode was active)"; fi
-    return 0
+    # Clean up
+    log INFO "Cleaning up host temporary directory..."
+    rm -rf "$tmp_dir"
+
+    if $is_dry_run; then
+        log SUCCESS "Dry run completed successfully - no actual changes made"
+    else
+        log SUCCESS "Backup successfully completed and pushed to GitHub."
+    fi
+    log SUCCESS "Backup operation completed successfully."
 }
 
 restore() {
-    local container_id="$1"
+    local container="$1"
     local github_token="$2"
     local github_repo="$3"
     local branch="$4"
@@ -1500,71 +1325,32 @@ restore() {
     }
 
     if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
-        local workflow_output
-        workflow_output=$(docker exec "$container_id" n8n export:workflow --all --output=$container_pre_workflows 2>&1) || {
-            if check_no_data "$workflow_output"; then
-                log INFO "No existing workflows found - this is a clean installation"
-                no_data_found=true
-                # Create empty workflows file
-                echo "[]" | docker exec -i "$container_id" sh -c "cat > $container_pre_workflows"
-            else
-                log ERROR "Failed to export workflows: $workflow_output"
-                backup_failed=true
-            fi
-        }
+        if [ ! -f "$pre_workflows" ]; then
+            log ERROR "Pre-restore backup file workflows.json not found in $pre_restore_dir. Cannot rollback workflows."
+            backup_failed=true
+        fi
     fi
-
     if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
-        if ! $backup_failed; then
-            local cred_output
-            cred_output=$(docker exec "$container_id" n8n export:credentials --all --decrypted --output=$container_pre_credentials 2>&1) || {
-                if check_no_data "$cred_output"; then
-                    log INFO "No existing credentials found - this is a clean installation"
-                    no_data_found=true
-                    # Create empty credentials file
-                    echo "[]" | docker exec -i "$container_id" sh -c "cat > $container_pre_credentials"
-                else
-                    log ERROR "Failed to export credentials: $cred_output"
-                    backup_failed=true
-                fi
-            }
+        if [ ! -f "$pre_credentials" ]; then
+            log ERROR "Pre-restore backup file credentials.json not found in $pre_restore_dir. Cannot rollback credentials."
+            backup_failed=true
         fi
     fi
-
-    if $backup_failed; then
-        log ERROR "Could not export current data completely. Cannot create pre-restore backup."
-        dockExec "$container_id" "rm -f $container_pre_workflows $container_pre_credentials" false || true
-        rm -rf "$pre_restore_dir"
-        pre_restore_dir=""
-        if ! $is_dry_run; then
-            log ERROR "Cannot proceed with restore safely without pre-restore backup."
-            return 1
-        fi
-    elif $no_existing_data; then
-        log INFO "No existing data found - proceeding with restore without pre-restore backup"
-        # Copy the empty files we created to the backup directory
-        if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
-            docker cp "${container_id}:${container_pre_workflows}" "$pre_workflows" || true
-        fi
-        if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
-            docker cp "${container_id}:${container_pre_credentials}" "$pre_credentials" || true
-        fi
-        dockExec "$container_id" "rm -f $container_pre_workflows $container_pre_credentials" false || true
-    else
+    if ! $backup_failed; then
         log INFO "Copying current data to host backup directory..."
         local copy_failed=false
         if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
             if $is_dry_run; then
-                log DRYRUN "Would copy ${container_id}:${container_pre_workflows} to $pre_workflows"
-            elif ! docker cp "${container_id}:${container_pre_workflows}" "$pre_workflows"; then copy_failed=true; fi
+                log DRYRUN "Would copy ${container}:${container_pre_workflows} to $pre_workflows"
+            elif ! docker cp "${container}:${container_pre_workflows}" "$pre_workflows"; then copy_failed=true; fi
         fi
         if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
              if $is_dry_run; then
-                 log DRYRUN "Would copy ${container_id}:${container_pre_credentials} to $pre_credentials"
-             elif ! docker cp "${container_id}:${container_pre_credentials}" "$pre_credentials"; then copy_failed=true; fi
+                 log DRYRUN "Would copy ${container}:${container_pre_credentials} to $pre_credentials"
+             elif ! docker cp "${container}:${container_pre_credentials}" "$pre_credentials"; then copy_failed=true; fi
         fi
         
-        dockExec "$container_id" "rm -f $container_pre_workflows $container_pre_credentials" "$is_dry_run" || true
+        dockExec "$container" "rm -f $container_pre_workflows $container_pre_credentials" "$is_dry_run" || true
 
         if $copy_failed; then
             log ERROR "Failed to copy backup files from container. Cannot proceed with restore safely."
@@ -1659,51 +1445,83 @@ restore() {
         fi
     fi
     
-    # EMERGENCY DIRECT APPROACH: Use the files from repository without complex validation
-    log INFO "Direct approach: Using files straight from repository..."
+    # Determine the backup source directory
+    local backup_source_dir
+    if $dated_backup_found; then
+        backup_source_dir="$selected_backup"
+        log INFO "Using dated backup source: $backup_source_dir"
+    elif [ -d "$download_dir/Backups/data" ]; then
+        backup_source_dir="$download_dir/Backups/data"
+        log INFO "Using non-dated backup source: Backups/data/"
+    else
+        backup_source_dir="$download_dir"
+        log INFO "Using legacy backup source: repository root"
+    fi
     
     # Set up container import paths
     local container_import_workflows="/tmp/import_workflows.json"
     local container_import_credentials="/tmp/import_credentials.json"
     
-    # Find the workflow and credentials files directly
+    # Find the workflow and credentials files in the backup source
     local repo_workflows=""
     local repo_credentials=""
+    local using_separate_files=false
     
-    # First try dated backup if specified
-    if $dated_backup_found; then
-        local dated_path="${selected_backup#./}"
-        log INFO "Looking for files in dated backup: $dated_path"
+    log INFO "Looking for backup files in: $backup_source_dir"
+    
+    # Check for separate files mode first (workflows/ and credentials/ subdirectories)
+    if [ -d "$backup_source_dir/workflows" ] && [ -d "$backup_source_dir/credentials" ]; then
+        using_separate_files=true
+        log INFO "Detected separate files backup mode"
         
-        if [ -f "${download_dir}/${dated_path}/workflows.json" ]; then
-            repo_workflows="${download_dir}/${dated_path}/workflows.json"
-            log SUCCESS "Found workflows.json in dated backup directory"
+        # For separate files mode, we need to use n8n import --separate
+        # But first, let's verify files exist in the subdirectories
+        local workflow_files
+        local credential_files
+        workflow_files=$(find "$backup_source_dir/workflows" -name "*.json" -type f | wc -l)
+        credential_files=$(find "$backup_source_dir/credentials" -name "*.json" -type f | wc -l)
+        
+        log DEBUG "Found $workflow_files workflow files and $credential_files credential files"
+        
+        if [ "$workflow_files" -gt 0 ] && [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
+            repo_workflows="$backup_source_dir/workflows"
+            log SUCCESS "Found workflows directory with $workflow_files files"
         fi
         
-        if [ -f "${download_dir}/${dated_path}/credentials.json" ]; then
-            repo_credentials="${download_dir}/${dated_path}/credentials.json"
-            log SUCCESS "Found credentials.json in dated backup directory"
+        if [ "$credential_files" -gt 0 ] && [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
+            repo_credentials="$backup_source_dir/credentials"
+            log SUCCESS "Found credentials directory with $credential_files files"
+        fi
+    else
+        # Single file mode
+        log INFO "Detected single file backup mode"
+        
+        if [ -f "$backup_source_dir/workflows.json" ] && [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
+            repo_workflows="$backup_source_dir/workflows.json"
+            log SUCCESS "Found workflows.json file"
+        fi
+        
+        if [ -f "$backup_source_dir/credentials.json" ] && [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
+            repo_credentials="$backup_source_dir/credentials.json"
+            log SUCCESS "Found credentials.json file"
         fi
     fi
     
-    # Fall back to repository root if files weren't found in dated backup
-    if [ -z "$repo_workflows" ] && [ -f "${download_dir}/workflows.json" ]; then
-        repo_workflows="${download_dir}/workflows.json"
-        log SUCCESS "Found workflows.json in repository root"
-    fi
-    
-    if [ -z "$repo_credentials" ] && [ -f "${download_dir}/credentials.json" ]; then
-        repo_credentials="${download_dir}/credentials.json"
-        log SUCCESS "Found credentials.json in repository root"
-    fi
-    
-    # Display file sizes for debug purposes
+    # Display file information for debug purposes
     if [ -n "$repo_workflows" ]; then
-        log DEBUG "Workflow file size: $(du -h "$repo_workflows" | cut -f1)"
+        if $using_separate_files; then
+            log DEBUG "Workflows directory: $repo_workflows ($(find "$repo_workflows" -name "*.json" | wc -l) files)"
+        else
+            log DEBUG "Workflow file size: $(du -h "$repo_workflows" | cut -f1)"
+        fi
     fi
     
     if [ -n "$repo_credentials" ]; then
-        log DEBUG "Credentials file size: $(du -h "$repo_credentials" | cut -f1)"
+        if $using_separate_files; then
+            log DEBUG "Credentials directory: $repo_credentials ($(find "$repo_credentials" -name "*.json" | wc -l) files)"
+        else
+            log DEBUG "Credentials file size: $(du -h "$repo_credentials" | cut -f1)"
+        fi
     fi
     
     # Proceed directly to import phase
@@ -1749,10 +1567,10 @@ restore() {
     # Copy workflow file if needed
     if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
         if $is_dry_run; then
-            log DRYRUN "Would copy $repo_workflows to ${container_id}:${container_import_workflows}"
+            log DRYRUN "Would copy $repo_workflows to ${container}:${container_import_workflows}"
         else
             log INFO "Copying workflows file to container..."
-            if docker cp "$repo_workflows" "${container_id}:${container_import_workflows}"; then
+            if docker cp "$repo_workflows" "${container}:${container_import_workflows}"; then
                 log SUCCESS "Successfully copied workflows.json to container"
             else
                 log ERROR "Failed to copy workflows.json to container."
@@ -1764,10 +1582,10 @@ restore() {
     # Copy credentials file if needed
     if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
         if $is_dry_run; then
-            log DRYRUN "Would copy $repo_credentials to ${container_id}:${container_import_credentials}"
+            log DRYRUN "Would copy $repo_credentials to ${container}:${container_import_credentials}"
         else
             log INFO "Copying credentials file to container..."
-            if docker cp "$repo_credentials" "${container_id}:${container_import_credentials}"; then
+            if docker cp "$repo_credentials" "${container}:${container_import_credentials}"; then
                 log SUCCESS "Successfully copied credentials.json to container"
             else
                 log ERROR "Failed to copy credentials.json to container."
@@ -1816,7 +1634,7 @@ restore() {
             # Copy original file to host temporarily for processing
             local host_temp_workflows
             host_temp_workflows=$(mktemp)
-            if ! docker cp "${container_id}:${container_import_workflows}" "$host_temp_workflows"; then
+            if ! docker cp "${container}:${container_import_workflows}" "$host_temp_workflows"; then
                 log ERROR "Failed to copy workflows file from container for ID processing"
                 import_status="failed"
             else
@@ -1824,7 +1642,7 @@ restore() {
                 host_processed_workflows=$(mktemp)
                 if strip_json_ids "$host_temp_workflows" "$host_processed_workflows" "workflow"; then
                     # Copy processed file back to container
-                    if docker cp "$host_processed_workflows" "${container_id}:${temp_workflow_file}"; then
+                    if docker cp "$host_processed_workflows" "${container}:${temp_workflow_file}"; then
                         workflow_import_file="$temp_workflow_file"
                         log SUCCESS "Workflows processed for import-as-new"
                     else
@@ -1859,7 +1677,7 @@ restore() {
                 log DRYRUN "Would run: $workflow_import_cmd"
             else
                 log INFO "Importing workflows..."
-                if ! dockExec "$container_id" "$workflow_import_cmd" false; then
+                if ! dockExec "$container" "$workflow_import_cmd" false; then
                     log ERROR "Failed to import workflows"
                     import_status="failed"
                 else
@@ -1881,7 +1699,7 @@ restore() {
             # Copy original file to host temporarily for processing
             local host_temp_credentials
             host_temp_credentials=$(mktemp)
-            if ! docker cp "${container_id}:${container_import_credentials}" "$host_temp_credentials"; then
+            if ! docker cp "${container}:${container_import_credentials}" "$host_temp_credentials"; then
                 log ERROR "Failed to copy credentials file from container for ID processing"
                 import_status="failed"
             else
@@ -1889,7 +1707,7 @@ restore() {
                 host_processed_credentials=$(mktemp)
                 if strip_json_ids "$host_temp_credentials" "$host_processed_credentials" "credential"; then
                     # Copy processed file back to container
-                    if docker cp "$host_processed_credentials" "${container_id}:${temp_credential_file}"; then
+                    if docker cp "$host_processed_credentials" "${container}:${temp_credential_file}"; then
                         credential_import_file="$temp_credential_file"
                         log SUCCESS "Credentials processed for import-as-new"
                     else
@@ -1924,7 +1742,7 @@ restore() {
                 log DRYRUN "Would run: $credential_import_cmd"
             else
                 log INFO "Importing credentials..."
-                if ! dockExec "$container_id" "$credential_import_cmd" false; then
+                if ! dockExec "$container" "$credential_import_cmd" false; then
                     log ERROR "Failed to import credentials"
                     import_status="failed"
                 else
@@ -1938,15 +1756,15 @@ restore() {
     if [ "$is_dry_run" != "true" ]; then
         log INFO "Cleaning up temporary files in container..."
         # Try a more Alpine-friendly approach - first check if files exist
-        if dockExec "$container_id" "[ -f $container_import_workflows ] && echo 'Workflow file exists'" "$is_dry_run"; then
+        if dockExec "$container" "[ -f $container_import_workflows ] && echo 'Workflow file exists'" "$is_dry_run"; then
             # Try with ash shell explicitly (common in Alpine)
-            dockExec "$container_id" "ash -c 'rm -f $container_import_workflows 2>/dev/null || true'" "$is_dry_run" || true
+            dockExec "$container" "ash -c 'rm -f $container_import_workflows 2>/dev/null || true'" "$is_dry_run" || true
             log DEBUG "Attempted cleanup of workflow import file"
         fi
         
-        if dockExec "$container_id" "[ -f $container_import_credentials ] && echo 'Credentials file exists'" "$is_dry_run"; then
+        if dockExec "$container" "[ -f $container_import_credentials ] && echo 'Credentials file exists'" "$is_dry_run"; then
             # Try with ash shell explicitly (common in Alpine)
-            dockExec "$container_id" "ash -c 'rm -f $container_import_credentials 2>/dev/null || true'" "$is_dry_run" || true
+            dockExec "$container" "ash -c 'rm -f $container_import_credentials 2>/dev/null || true'" "$is_dry_run" || true
             log DEBUG "Attempted cleanup of credentials import file"
         fi
         
