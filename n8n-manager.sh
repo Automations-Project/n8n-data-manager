@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.1.0"
+VERSION="3.1.1"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -521,7 +521,7 @@ check_github_access() {
 dockExec() {
     local container_id="$1"
     local cmd="$2"
-    local is_dry_run=$3
+    local is_dry_run="${3:-$is_dry_run}"  # Use third parameter or fall back to global is_dry_run
     local output=""
     local exit_code=0
 
@@ -1949,7 +1949,7 @@ get_incremental_changes() {
             done
         fi
     else
-        # Compare single JSON files
+        # Single file mode
         for file in workflows.json credentials.json; do
             if [ -f "$temp_export_path/$file" ]; then
                 if ! git show "$last_backup_commit:$file" >/dev/null 2>&1; then
