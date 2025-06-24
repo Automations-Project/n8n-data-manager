@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.28"
+VERSION="3.0.29"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -1136,135 +1136,93 @@ backup() {
     fi
 
     log INFO "Copying exported files from container into Git directory..."
-    local copy_status="success" # Use string instead of boolean to avoid empty command errors
     
-    # Determine files/directories to copy based on mode
+    # Create backup directory structure
+    local backup_dir="$tmp_dir"
+    if $use_dated_backup; then
+        backup_dir="$tmp_dir/backup_$(timestamp)"
+        if ! $is_dry_run; then
+            mkdir -p "$backup_dir"
+        else
+            log DRYRUN "Would create dated backup directory: $backup_dir"
+        fi
+    fi
+    
+    # Create proper subdirectories for separate files mode
+    if $using_separate_files && ! $is_dry_run; then
+        mkdir -p "$backup_dir/workflows"
+        mkdir -p "$backup_dir/credentials"
+        log DEBUG "Created subdirectories: workflows/, credentials/"
+    fi
+
+    # Determine items to copy with correct paths
     local items_to_copy=()
+    
     if $using_separate_files; then
-        # Copy directories or specific files for separate files mode
+        # Separate files mode - organize into subdirectories
         if [ -n "$ARG_WORKFLOW_ID" ]; then
-            # Specific workflow: copy only the individual workflow file
-            items_to_copy+=("workflow_$ARG_WORKFLOW_ID.json")
-        elif [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
-            # All workflows: copy entire workflows directory
-            items_to_copy+=("workflows/")
+            items_to_copy+=("workflow_$ARG_WORKFLOW_ID.json:workflows/workflow_$ARG_WORKFLOW_ID.json")
+        else
+            items_to_copy+=("workflows/:workflows/")
         fi
         
         if [ -n "$ARG_CREDENTIAL_ID" ]; then
-            # Specific credential: copy only the individual credential file
-            items_to_copy+=("credential_$ARG_CREDENTIAL_ID.json")
-        elif [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
-            # All credentials: copy entire credentials directory
-            items_to_copy+=("credentials/")
+            items_to_copy+=("credential_$ARG_CREDENTIAL_ID.json:credentials/credential_$ARG_CREDENTIAL_ID.json")
+        elif [ -n "$additional_credential_ids" ]; then
+            # Add individual linked credential files to credentials/ subdirectory
+            log DEBUG "Adding linked credential files to copy list: $additional_credential_ids" >&2
+            local remaining_creds="$additional_credential_ids"
+            while [ -n "$remaining_creds" ]; do
+                local cred_id="${remaining_creds%% *}"
+                items_to_copy+=("credential_$cred_id.json:credentials/credential_$cred_id.json")
+                log DEBUG "Added credential file to copy list: credential_$cred_id.json -> credentials/" >&2
+                
+                # Remove processed credential from list
+                if [ "$remaining_creds" = "$cred_id" ]; then
+                    remaining_creds=""
+                else
+                    remaining_creds="${remaining_creds#* }"
+                fi
+            done
+        else
+            items_to_copy+=("credentials/:credentials/")
         fi
-        
-        # For linked credentials in workflow-specific backup
-        if [ -n "$ARG_WORKFLOW_ID" ] && [ "$ARG_INCLUDE_LINKED_CREDS" = "true" ]; then
-            log DEBUG "Linked credential files will be copied individually"
-            # Add individual credential files discovered by linked credential logic
-            if [ -n "$additional_credential_ids" ]; then
-                log DEBUG "Adding linked credential files to copy list: $additional_credential_ids"
-                local cred_ids_to_add="$additional_credential_ids"
-                while [ -n "$cred_ids_to_add" ]; do
-                    local cred_id="${cred_ids_to_add%% *}"  # Extract first word
-                    if [ "$cred_id" = "$cred_ids_to_add" ]; then
-                        cred_ids_to_add=""  # Last ID
-                    else
-                        cred_ids_to_add="${cred_ids_to_add#* }"  # Remove processed ID
-                    fi
-                    items_to_copy+=("credential_$cred_id.json")
-                    log DEBUG "Added credential file to copy list: credential_$cred_id.json"
-                done
-            fi
-        fi
-        items_to_copy+=(".env")  # Add .env file
+        items_to_copy+=(".env:.env")  # .env stays in root
     else
-        # Copy JSON files for traditional mode
-        if [ -z "$ARG_CREDENTIAL_ID" ] && [[ "$ARG_RESTORE_TYPE" != "credentials" ]]; then
-            items_to_copy+=("workflows.json")
+        # Single file mode
+        if [ -z "$ARG_WORKFLOW_ID" ]; then
+            items_to_copy+=("workflows.json:workflows.json")
         fi
-        if [ -z "$ARG_WORKFLOW_ID" ] && [[ "$ARG_RESTORE_TYPE" != "workflows" ]]; then
-            items_to_copy+=("credentials.json")
+        if [ -z "$ARG_CREDENTIAL_ID" ]; then
+            items_to_copy+=("credentials.json:credentials.json")
         fi
-        items_to_copy+=(".env")
+        items_to_copy+=(".env:.env")
     fi
-    
-    # Copy each item (file or directory)
+
+    # Copy files with proper directory structure
     for item in "${items_to_copy[@]}"; do
-        source_path="/tmp/${item}"
-        if [ "$use_dated_backup" = "true" ]; then
-            # Create timestamped subdirectory
-            mkdir -p "${target_dir}" || return 1
-            dest_path="${target_dir}/${item}"
-        else
-            dest_path="${tmp_dir}/${item}"
-        fi
-
-        # Check if item exists in container (file or directory)
-        local item_exists=false
-        if [[ "$item" == */ ]]; then
-            # Directory check
-            if docker exec "$container_id" test -d "$source_path"; then
-                item_exists=true
-            fi
-        else
-            # File check
-            if docker exec "$container_id" test -f "$source_path"; then
-                item_exists=true
-            fi
-        fi
+        local src_path="${item%%:*}"
+        local dest_path="${item##*:}"
+        local container_src_path="/tmp/$src_path"
+        local backup_dest_path="$backup_dir/$dest_path"
         
-        if ! $item_exists; then
-            if [[ "$item" == ".env" ]]; then
-                log WARN ".env file not found in container, skipping."
-                continue
+        if $is_dry_run; then
+            log DRYRUN "Would copy $container_src_path to $backup_dest_path"
+        else
+            log DEBUG "Copying $container_src_path to $backup_dest_path"
+            if [[ "$src_path" == */ ]]; then
+                # Directory copy
+                if ! docker cp "${container_id}:${container_src_path%/}" "${backup_dest_path%/}"; then
+                    log WARN "Failed to copy directory: $src_path (may not exist)"
+                fi
             else
-                log ERROR "Required item $item not found in container"
-                copy_status="failed"
-                continue
+                # File copy
+                if ! docker cp "${container_id}:${container_src_path}" "$backup_dest_path"; then
+                    log WARN "Failed to copy file: $src_path (may not exist)"
+                fi
             fi
         fi
-
-        # Copy item from container
-        if [[ "$item" == */ ]]; then
-            # Copy directory
-            log DEBUG "Copying directory $item from container"
-            if ! docker cp "${container_id}:${source_path%/}" "$(dirname "$dest_path")"; then
-                log ERROR "Failed to copy directory $item from container"
-                copy_status="failed"
-                continue
-            fi
-            # Count files in directory for reporting
-            local file_count
-            file_count=$(docker exec "$container_id" find "$source_path" -name "*.json" -type f | wc -l)
-            log SUCCESS "Successfully copied directory $item ($file_count files) to ${dest_path}"
-        else
-            # Copy file
-            local size
-            size=$(docker exec "$container_id" du -h "$source_path" | awk '{print $1}')
-            if ! docker cp "${container_id}:${source_path}" "${dest_path}"; then
-                log ERROR "Failed to copy $item from container"
-                copy_status="failed"
-                continue
-            fi
-            log SUCCESS "Successfully copied $size to ${dest_path}"
-        fi
-        
-        # Force Git to see changes by updating a separate timestamp file instead of modifying the JSON files
-        # This preserves the integrity of the n8n files for restore operations
-        
-        # Create or update the timestamp file in the same directory
-        local ts_file="${tmp_dir}/backup_timestamp.txt"
-        echo "Backup generated at: $(date +"%Y-%m-%d %H:%M:%S.%N")" > "$ts_file"
-        log DEBUG "Created timestamp file $ts_file to track backup uniqueness"
     done
-    
-    # Check if any copy operations failed
-    if [ "$copy_status" = "failed" ]; then 
-        log ERROR "Copy operations failed, aborting backup"
-        rm -rf "$tmp_dir"
-        return 1
-    fi
 
     log INFO "Cleaning up temporary files in container..."
     dockExec "$container_id" "rm -f $container_workflows $container_credentials $container_env" "$is_dry_run" || log WARN "Could not clean up temporary files in container."
