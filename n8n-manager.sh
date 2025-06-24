@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.0.26"
+VERSION="3.0.27"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -921,9 +921,25 @@ backup() {
                         # Update credential export command to include discovered credentials
                         if $using_separate_files; then
                             # For separate files, export each credential individually
-                            for cred_id in $additional_credential_ids; do
+                            local cred_ids_to_process="$additional_credential_ids"
+                            log DEBUG "Processing credential IDs: $cred_ids_to_process"
+                            
+                            # Process each credential ID individually
+                            while [ -n "$cred_ids_to_process" ]; do
+                                # Extract first credential ID
+                                local cred_id="${cred_ids_to_process%% *}"  # Get first word
+                                if [ "$cred_id" = "$cred_ids_to_process" ]; then
+                                    # Last credential ID
+                                    cred_ids_to_process=""
+                                else
+                                    # Remove processed ID from the list
+                                    cred_ids_to_process="${cred_ids_to_process#* }"
+                                fi
+                                
+                                # Export this individual credential
                                 local extra_cred_cmd="n8n export:credentials --id=$cred_id --decrypted --pretty --output=/tmp/credential_$cred_id.json"
-                                log DEBUG "Exporting linked credential: $extra_cred_cmd"
+                                log DEBUG "Exporting individual credential ID: $cred_id"
+                                log DEBUG "Command: $extra_cred_cmd"
                                 dockExec "$container_id" "$extra_cred_cmd" false || log WARN "Failed to export linked credential ID: $cred_id"
                             done
                         else
@@ -934,8 +950,22 @@ backup() {
                             fi
                             # Build export command for multiple specific credentials
                             credential_export_cmd="n8n export:credentials --decrypted --output=$container_credentials"
-                            for cred_id in $all_cred_ids; do
+                            local cred_ids_to_process="$all_cred_ids"
+                            log DEBUG "Building credential export command for IDs: $cred_ids_to_process"
+                            
+                            # Process each credential ID individually to build command
+                            while [ -n "$cred_ids_to_process" ]; do
+                                # Extract first credential ID
+                                local cred_id="${cred_ids_to_process%% *}"  # Get first word
+                                if [ "$cred_id" = "$cred_ids_to_process" ]; then
+                                    # Last credential ID
+                                    cred_ids_to_process=""
+                                else
+                                    # Remove processed ID from the list
+                                    cred_ids_to_process="${cred_ids_to_process#* }"
+                                fi
                                 credential_export_cmd="$credential_export_cmd --id=$cred_id"
+                                log DEBUG "Added credential ID to command: $cred_id"
                             done
                         fi
                     else
