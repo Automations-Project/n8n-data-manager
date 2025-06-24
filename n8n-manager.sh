@@ -137,8 +137,10 @@ log() {
     fi
     
     # Format message
-    local formatted="${color}${prefix} ${message}${NC}"
-    local plain="$(date +'%Y-%m-%d %H:%M:%S') ${prefix} ${message}"
+    local formatted
+    formatted="${color}${prefix} ${message}${NC}"
+    local plain
+    plain="$(date +'%Y-%m-%d %H:%M:%S') ${prefix} ${message}"
     
     # Output
     if [ "$to_stderr" = "true" ]; then
@@ -537,7 +539,7 @@ dockExec() {
             log DEBUG "Container output:\n$(echo "$output" | sed 's/^/  /')"
         fi
         
-        if [ $exit_code -ne 0 ]; then
+        if [ "$exit_code" -ne 0 ]; then
             log ERROR "Command failed in container (Exit Code: $exit_code): $cmd"
             if [ "$ARG_VERBOSE" != "true" ] && [ -n "$output" ]; then
                 log ERROR "Container output:\n$(echo "$output" | sed 's/^/  /')"
@@ -627,7 +629,7 @@ if not strip_ids_from_json('$input_file', '$output_file', '$item_type'):
     sys.exit(1)
 " 2>/dev/null
         local python_exit=$?
-        if [ $python_exit -eq 0 ]; then
+        if [ "$python_exit" -eq 0 ]; then
             log SUCCESS "strip_json_ids: Successfully processed with Python3"
             return 0
         else
@@ -673,7 +675,7 @@ if (!stripIdsFromJson('$input_file', '$output_file', '$item_type')) {
 }
 " 2>/dev/null
         local node_exit=$?
-        if [ $node_exit -eq 0 ]; then
+        if [ "$node_exit" -eq 0 ]; then
             log SUCCESS "strip_json_ids: Successfully processed with Node.js"
             return 0
         else
@@ -898,7 +900,7 @@ backup() {
         else
             log INFO "Exporting all workflows"
             if ! $is_dry_run; then
-                if ! dockExec "$container" "n8n export:workflow --output=$container_workflows"; then
+                if ! dockExec "$container" "n8n export:workflow --all --output=$container_workflows"; then
                     log ERROR "Failed to export workflows"
                     rm -rf "$tmp_dir"
                     return 1
@@ -977,7 +979,7 @@ backup() {
             fi
         else
             if ! $is_dry_run; then
-                if ! dockExec "$container" "n8n export:credentials --decrypted --output=$container_credentials"; then
+                if ! dockExec "$container" "n8n export:credentials --all --decrypted --output=$container_credentials"; then
                     log ERROR "Failed to export credentials"
                     rm -rf "$tmp_dir"
                     return 1
@@ -1109,7 +1111,8 @@ backup() {
             # Handle directory copying differently to avoid duplication
             if [[ "$src_path" == "workflows" ]] || [[ "$src_path" == "credentials" ]]; then
                 # For directories, copy contents to avoid creating nested subdirectories
-                local temp_dir=$(mktemp -d)
+                local temp_dir
+                temp_dir=$(mktemp -d)
                 if docker cp "$container:/tmp/$src_path" "$temp_dir/" 2>/dev/null; then
                     # Copy the contents of the extracted directory to the destination
                     if [ -d "$temp_dir/$src_path" ]; then
@@ -1223,7 +1226,8 @@ backup() {
             backup_identifier="[Backups/data]"
         fi
         
-        local commit_message="🛡️ n8n Backup (v$n8n_ver) - $(timestamp) $backup_identifier"
+        local commit_message
+        commit_message="🛡️ n8n Backup (v$n8n_ver) - $(timestamp) $backup_identifier"
         if [ "$backup_type" != "full" ]; then
             commit_message="$commit_message ($backup_type)"
         fi
@@ -1813,36 +1817,36 @@ discover_linked_credentials() {
         discovered_creds=$(python3 -c "
 import json, sys
 try:
-    with open('$workflow_json_file', 'r') as f:
-        data = json.load(f)
+        with open('$workflow_json_file', 'r') as f:
+            data = json.load(f)
+        
+        creds = set()
+        
+        # Handle both single workflow export and multiple workflows export
+        workflows_to_process = []
+        
+        if isinstance(data, list):
+            # Multiple workflows (array format)
+            workflows_to_process = data
+        elif 'workflows' in data:
+            # Multiple workflows (object with workflows key)
+            workflows_to_process = data['workflows']
+        elif 'nodes' in data:
+            # Single workflow export (direct workflow object)
+            workflows_to_process = [data]
+        else:
+            # Try to process as single workflow anyway
+            workflows_to_process = [data]
+        
+        for workflow in workflows_to_process:
+            if 'nodes' in workflow:
+                for node in workflow['nodes']:
+                    if 'credentials' in node:
+                        for cred_type, cred_info in node['credentials'].items():
+                            if isinstance(cred_info, dict) and 'id' in cred_info:
+                                creds.add(cred_info['id'])
     
-    creds = set()
-    
-    # Handle both single workflow export and multiple workflows export
-    workflows_to_process = []
-    
-    if isinstance(data, list):
-        # Multiple workflows (array format)
-        workflows_to_process = data
-    elif 'workflows' in data:
-        # Multiple workflows (object with workflows key)
-        workflows_to_process = data['workflows']
-    elif 'nodes' in data:
-        # Single workflow export (direct workflow object)
-        workflows_to_process = [data]
-    else:
-        # Try to process as single workflow anyway
-        workflows_to_process = [data]
-    
-    for workflow in workflows_to_process:
-        if 'nodes' in workflow:
-            for node in workflow['nodes']:
-                if 'credentials' in node:
-                    for cred_type, cred_info in node['credentials'].items():
-                        if isinstance(cred_info, dict) and 'id' in cred_info:
-                            creds.add(cred_info['id'])
-    
-    print(' '.join(sorted(creds)))
+        print(' '.join(sorted(creds)))
 except Exception as e:
     print(f'Error: {e}', file=sys.stderr)
     sys.exit(1)
@@ -1887,14 +1891,16 @@ get_incremental_changes() {
     fi
     
     # Change to the git repository directory
-    local original_pwd=$(pwd)
+    local original_pwd
+    original_pwd=$(pwd)
     cd "$git_repo_path" || {
         log ERROR "Failed to change to git repository: $git_repo_path"
         return 1
     }
     
     # Get last backup commit (look for commits with backup message pattern)
-    local last_backup_commit=$(git log --oneline --grep="n8n Backup" --grep="🛡️" -1 --format="%H" 2>/dev/null || echo "")
+    local last_backup_commit
+    last_backup_commit=$(git log --oneline --grep="n8n Backup" --grep="🛡️" -1 --format="%H" 2>/dev/null || echo "")
     
     if [ -z "$last_backup_commit" ]; then
         log INFO "No previous backup found - performing full backup"
