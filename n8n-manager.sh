@@ -9,7 +9,7 @@ IFS=$'\n\t'
 CONFIG_FILE_PATH="${XDG_CONFIG_HOME:-$HOME/.config}/n8n-manager/config"
 
 # --- Global variables ---
-VERSION="3.1.3"
+VERSION="3.1.4"
 DEBUG_TRACE=${DEBUG_TRACE:-false} # Set to true for trace debugging
 SELECTED_ACTION=""
 SELECTED_CONTAINER_ID=""
@@ -1015,6 +1015,9 @@ backup() {
         # Export individual linked credentials
         log DEBUG "Processing credential IDs: $additional_credential_ids" >&2
         local remaining_creds="$additional_credential_ids"
+        local failed_creds=""
+        local exported_creds=""
+        
         while [ -n "$remaining_creds" ]; do
             local cred_id="${remaining_creds%% *}"
             log DEBUG "Exporting individual credential ID: $cred_id" >&2
@@ -1022,9 +1025,19 @@ backup() {
             log DEBUG "Command: $cmd" >&2
             if ! $is_dry_run; then
                 if ! dockExec "$container" "$cmd"; then
-                    log ERROR "Failed to export credential $cred_id"
-                    rm -rf "$tmp_dir"
-                    return 1
+                    log WARN "Failed to export linked credential $cred_id (may be deleted/inactive)" >&2
+                    if [ -n "$failed_creds" ]; then
+                        failed_creds="$failed_creds $cred_id"
+                    else
+                        failed_creds="$cred_id"
+                    fi
+                else
+                    log DEBUG "Successfully exported credential $cred_id" >&2
+                    if [ -n "$exported_creds" ]; then
+                        exported_creds="$exported_creds $cred_id"
+                    else
+                        exported_creds="$cred_id"
+                    fi
                 fi
             else
                 log DRYRUN "Would export credential ID: $cred_id"
@@ -1037,6 +1050,15 @@ backup() {
                 remaining_creds="${remaining_creds#* }"
             fi
         done
+        
+        # Report results
+        if [ -n "$exported_creds" ]; then
+            log SUCCESS "Successfully exported linked credentials: $exported_creds"
+        fi
+        if [ -n "$failed_creds" ]; then
+            log WARN "Some linked credentials could not be exported: $failed_creds"
+            log INFO "Backup will continue - missing credentials may be deleted/inactive"
+        fi
     else
         log INFO "Exporting all credentials"
         if $using_separate_files; then
