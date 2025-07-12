@@ -960,7 +960,35 @@ backup() {
     if [ -n "$ARG_WORKFLOW_ID" ] && $ARG_INCLUDE_LINKED_CREDS; then
         log INFO "Auto-discovering linked credentials for workflow ID: $ARG_WORKFLOW_ID"
         if ! $is_dry_run; then
-            additional_credential_ids=$(discover_linked_credentials "$container" "$ARG_WORKFLOW_ID" "$tmp_dir")
+            # First copy workflow files from container to temp directory for analysis
+            if $using_separate_files; then
+                # Copy individual workflow files from container
+                if ! dockExec "$container" "cp /tmp/workflows/*.json $tmp_dir/" 2>/dev/null; then
+                    log DEBUG "No workflow files to copy for credential discovery" >&2
+                fi
+            else
+                # Copy single workflow file from container
+                if ! dockExec "$container" "cp /tmp/workflows.json $tmp_dir/" 2>/dev/null; then
+                    log DEBUG "No workflow file to copy for credential discovery" >&2
+                fi
+            fi
+            
+            # Now discover credentials from the copied files
+            additional_credential_ids=""
+            for workflow_file in "$tmp_dir"/workflow_*.json "$tmp_dir"/workflows.json; do
+                if [ -f "$workflow_file" ]; then
+                    local found_creds
+                    found_creds=$(discover_linked_credentials "$workflow_file")
+                    if [ -n "$found_creds" ]; then
+                        if [ -n "$additional_credential_ids" ]; then
+                            additional_credential_ids="$additional_credential_ids $found_creds"
+                        else
+                            additional_credential_ids="$found_creds"
+                        fi
+                    fi
+                fi
+            done
+            
             if [ -n "$additional_credential_ids" ]; then
                 log SUCCESS "Found linked credentials: $additional_credential_ids"
             else
