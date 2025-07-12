@@ -897,7 +897,12 @@ backup() {
             
             if ! $is_dry_run; then
                 if $using_separate_files; then
-                    # For separate files mode, create individual workflow file
+                    # For separate files mode, create directories and export individual workflow file
+                    if ! dockExec "$container" "mkdir -p /tmp/workflows"; then
+                        log ERROR "Failed to create workflows directory in container"
+                        rm -rf "$tmp_dir"
+                        return 1
+                    fi
                     if ! dockExec "$container" "n8n export:workflow --id=$workflow_id --output=/tmp/workflows/workflow_$workflow_id.json"; then
                         log ERROR "Failed to export workflow $workflow_id"
                         rm -rf "$tmp_dir"
