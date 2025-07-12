@@ -875,16 +875,55 @@ backup() {
 
     # Export workflow(s)
     if [ -n "$ARG_WORKFLOW_ID" ]; then
-        log INFO "Exporting specific workflow ID: $ARG_WORKFLOW_ID"
-        if ! $is_dry_run; then
-            if ! dockExec "$container" "n8n export:workflow --id=$ARG_WORKFLOW_ID --output=/tmp/workflow_$ARG_WORKFLOW_ID.json"; then
-                log ERROR "Failed to export workflow $ARG_WORKFLOW_ID"
-                rm -rf "$tmp_dir"
-                return 1
+        log INFO "Exporting specific workflow IDs: $ARG_WORKFLOW_ID"
+        
+        # Handle multiple workflow IDs (comma-separated)
+        local workflow_ids="$ARG_WORKFLOW_ID"
+        local remaining_workflows="$workflow_ids"
+        
+        while [ -n "$remaining_workflows" ]; do
+            # Extract first workflow ID
+            local workflow_id
+            if [[ "$remaining_workflows" == *","* ]]; then
+                workflow_id="${remaining_workflows%%,*}"
+            else
+                workflow_id="$remaining_workflows"
             fi
-        else
-            log DRYRUN "Would export workflow ID: $ARG_WORKFLOW_ID"
-        fi
+            
+            # Trim whitespace
+            workflow_id="$(echo "$workflow_id" | xargs)"
+            
+            log INFO "Exporting workflow ID: $workflow_id"
+            
+            if ! $is_dry_run; then
+                if $using_separate_files; then
+                    # For separate files mode, create individual workflow file
+                    if ! dockExec "$container" "n8n export:workflow --id=$workflow_id --output=/tmp/workflows/workflow_$workflow_id.json"; then
+                        log ERROR "Failed to export workflow $workflow_id"
+                        rm -rf "$tmp_dir"
+                        return 1
+                    fi
+                else
+                    # For single file mode, export to individual temp file
+                    if ! dockExec "$container" "n8n export:workflow --id=$workflow_id --output=/tmp/workflow_$workflow_id.json"; then
+                        log ERROR "Failed to export workflow $workflow_id"
+                        rm -rf "$tmp_dir"
+                        return 1
+                    fi
+                fi
+            else
+                log DRYRUN "Would export workflow ID: $workflow_id"
+            fi
+            
+            # Remove processed workflow from list
+            if [ "$remaining_workflows" = "$workflow_id" ]; then
+                remaining_workflows=""
+            else
+                remaining_workflows="${remaining_workflows#*,}"
+                # Trim leading whitespace
+                remaining_workflows="$(echo "$remaining_workflows" | sed 's/^[[:space:]]*//g')"
+            fi
+        done
     else
         if $using_separate_files; then
             log INFO "Exporting all workflows in separate files"
