@@ -1,0 +1,101 @@
+name: install-redirect-monitor
+
+on:
+  schedule:
+    # Every 15 minutes. Offset by 7 to dodge top-of-hour high-load delays.
+    - cron: '7,22,37,52 * * * *'
+  workflow_dispatch:
+
+permissions:
+  issues: write
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      MONITOR_URL: 'https://i.nskha.com/install.sh'
+      USER_AGENT: 'n8n-manager-monitor/1.0 (+github.com/Automations-Project/n8n-data-manager)'
+    steps:
+      - name: Fetch first line
+        id: fetch
+        run: |
+          set -Eeuo pipefail
+          OUTPUT=$(mktemp)
+          trap 'rm -f "$OUTPUT"' EXIT
+          HTTP_STATUS=$(curl -sSL \
+            --user-agent "${USER_AGENT}" \
+            --max-time 30 \
+            --retry 2 \
+            --retry-delay 5 \
+            -o "${OUTPUT}" \
+            -w '%{http_code}' \
+            "${MONITOR_URL}")
+          FIRST_LINE=$(head -1 "${OUTPUT}" || true)
+          BODY_SIZE=$(wc -c < "${OUTPUT}")
+          {
+            echo "http_status=${HTTP_STATUS}"
+            echo "body_size=${BODY_SIZE}"
+            # Use heredoc form for first_line so newlines/special chars don't break GITHUB_OUTPUT
+            printf 'first_line<<__EOF__\n%s\n__EOF__\n' "${FIRST_LINE}"
+          } >> "${GITHUB_OUTPUT}"
+          echo "::notice::status=${HTTP_STATUS} size=${BODY_SIZE} first_line=${FIRST_LINE}"
+
+      - name: Assert healthy
+        id: assert
+        run: |
+          set -Eeuo pipefail
+          STATUS='${{ steps.fetch.outputs.http_status }}'
+          FIRST='${{ steps.fetch.outputs.first_line }}'
+          if [ "${STATUS}" != "200" ]; then
+            echo "::error::HTTP ${STATUS} from ${MONITOR_URL}"
+            exit 1
+          fi
+          if ! printf '%s' "${FIRST}" | grep -qE '^(#!/bin/bash|#!/usr/bin/env bash)$'; then
+            echo "::error::Unexpected first line: '${FIRST}' (expected shebang)"
+            exit 1
+          fi
+          echo "Healthy: status=${STATUS}, first_line='${FIRST}'"
+
+      - name: Open alert issue (failure only)
+        if: failure()
+        uses: actions/github-script@v8
+        env:
+          MONITOR_URL: ${{ env.MONITOR_URL }}
+          STATUS: ${{ steps.fetch.outputs.http_status }}
+          FIRST_LINE: ${{ steps.fetch.outputs.first_line }}
+          BODY_SIZE: ${{ steps.fetch.outputs.body_size }}
+        with:
+          script: |
+            const status = process.env.STATUS || 'unknown';
+            const firstLine = process.env.FIRST_LINE || '';
+            const size = process.env.BODY_SIZE || '0';
+            const url = process.env.MONITOR_URL;
+            const title = `[monitor] i.nskha.com unhealthy — status=${status}`;
+            const existing = await github.rest.issues.listForRepo({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              labels: 'monitor,redirect',
+              state: 'open',
+              per_page: 10,
+            });
+            if (existing.data.some(i => i.title === title)) {
+              core.info('Duplicate alert — skipping issue creation');
+              return;
+            }
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              title,
+              body: [
+                `**URL:** ${url}`,
+                `**Status:** ${status}`,
+                `**First line:** \`${firstLine}\``,
+                `**Body size:** ${size} bytes`,
+                `**Run:** ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`,
+                ``,
+                'Triggered by `install-redirect-monitor.yml` on schedule. See repo planning notes for runbook.',
+              ].join('\n'),
+              labels: ['monitor', 'redirect', 'priority:high'],
+            });
