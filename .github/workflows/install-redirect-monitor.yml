@@ -15,7 +15,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     env:
-      MONITOR_URL: 'https://i.nskha.com/install.sh'
+      # Probe target switched from https://i.nskha.com/install.sh to GitHub raw on
+      # 2026-05-02 because Cloudflare edge bot-fight 403s GHA runner IPs even with
+      # the monitor's custom UA. See PROJECT.md ## Key Decisions for full rationale.
+      # Distribution-surface monitoring (CF/Worker/S4) deferred to Phase 8.
+      MONITOR_URL: 'https://raw.githubusercontent.com/Automations-Project/n8n-data-manager/main/install.sh'
       USER_AGENT: 'n8n-manager-monitor/1.0 (+github.com/Automations-Project/n8n-data-manager)'
     steps:
       - name: Fetch first line
