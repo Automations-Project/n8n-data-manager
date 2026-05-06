@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Section divider — DARK variant.
+  Five #d63977 dots in a row (the n8n-manager logo's ring unrolled),
+  joined by alternating up/down cubic curves that mimic the wandering
+  S-curves of n8n editor connections jumping between nodes.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 36" role="presentation">
+  <!-- Connecting curves — zig up, zag down, zig up, zag down -->
+  <g stroke="#d63977" stroke-width="1.6" fill="none"
+     stroke-linecap="round" stroke-opacity="0.60">
+    <path d="M 200,18 C 270,4  330,4  400,18"/>
+    <path d="M 400,18 C 470,32 530,32 600,18"/>
+    <path d="M 600,18 C 670,4  730,4  800,18"/>
+    <path d="M 800,18 C 870,32 930,32 1000,18"/>
+  </g>
+  <!-- 5 nodes, mirroring the logo's pentagon ring count -->
+  <g fill="#d63977">
+    <circle cx="200"  cy="18" r="4"/>
+    <circle cx="400"  cy="18" r="4"/>
+    <circle cx="600"  cy="18" r="4"/>
+    <circle cx="800"  cy="18" r="4"/>
+    <circle cx="1000" cy="18" r="4"/>
+  </g>
+</svg>

@@ -1,0 +1,150 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  n8n-manager hero — DARK variant.
+
+  Palette is built around the logo's two anchor colours:
+    #d63977 — n8n pink (ring + 5 nodes + accents)
+    #13162a — deep navy (background floor)
+  with a hint of terminal-cyan to nod at the bash CLI angle.
+
+  ICON SLOT — the centred 160×160 platter inlines n8n-manager-dark.svg
+  (pink ring, white shell prompt). To swap the icon: replace the inner
+  contents of <g id="ICON_SLOT">, keeping its transform.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 360" role="img"
+     aria-label="n8n-manager — Backup, Restore, Migrate" preserveAspectRatio="xMidYMid meet">
+  <defs>
+    <!-- BG: navy floor → midnight, anchored on the logo's #13162a -->
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%"   stop-color="#13162a"/>
+      <stop offset="55%"  stop-color="#1c1f3a"/>
+      <stop offset="100%" stop-color="#0a0c1a"/>
+    </linearGradient>
+
+    <!-- N8n-pink glow (top-left) -->
+    <radialGradient id="glowPink" cx="0.18" cy="0.42" r="0.55">
+      <stop offset="0%"   stop-color="#d63977" stop-opacity="0.50"/>
+      <stop offset="60%"  stop-color="#d63977" stop-opacity="0.10"/>
+      <stop offset="100%" stop-color="#d63977" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Terminal-cyan glow (bottom-right) — bash hint -->
+    <radialGradient id="glowCyan" cx="0.86" cy="0.62" r="0.50">
+      <stop offset="0%"   stop-color="#36B9D5" stop-opacity="0.40"/>
+      <stop offset="60%"  stop-color="#36B9D5" stop-opacity="0.08"/>
+      <stop offset="100%" stop-color="#36B9D5" stop-opacity="0"/>
+    </radialGradient>
+
+    <!-- Hairline grid -->
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0 L0 0 0 40" fill="none" stroke="#FFFFFF" stroke-opacity="0.04" stroke-width="1"/>
+    </pattern>
+
+    <!-- Soft shadow for the icon platter -->
+    <filter id="softshadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="6"/>
+      <feOffset dx="0" dy="3"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.55"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
+    <!-- Wordmark gradient: pink head → soft pink tail -->
+    <linearGradient id="title" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%"   stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#FFD1E0"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Layered background -->
+  <rect width="1200" height="360" fill="url(#bg)"/>
+  <rect width="1200" height="360" fill="url(#grid)"/>
+  <rect width="1200" height="360" fill="url(#glowPink)"/>
+  <rect width="1200" height="360" fill="url(#glowCyan)"/>
+
+  <!-- Decorative flow-graph (n8n editor nod) -->
+  <g stroke="#FFFFFF" stroke-opacity="0.18" fill="none" stroke-width="1.5">
+    <path d="M150 90 C 280 90, 320 170, 450 170" stroke-dasharray="4 6"/>
+    <path d="M450 170 C 580 170, 620 250, 750 250" stroke-dasharray="4 6"/>
+    <path d="M750 250 C 880 250, 920 130, 1050 130" stroke-dasharray="4 6"/>
+  </g>
+  <g fill="#d63977">
+    <circle cx="150"  cy="90"  r="6"/>
+    <circle cx="450"  cy="170" r="6"/>
+    <circle cx="750"  cy="250" r="6"/>
+    <circle cx="1050" cy="130" r="6"/>
+  </g>
+
+  <!-- Faint shell-prompt motif behind the wordmark — "$_" bash hint -->
+  <g fill="#FFFFFF" fill-opacity="0.04" font-family="ui-monospace, SFMono-Regular, Menlo, monospace">
+    <text x="40" y="312" font-size="180" font-weight="700">$_</text>
+  </g>
+
+  <!-- ═════════════ ICON SLOT ═════════════
+       Centre platter (160×160) at (520, 100) with the n8n-manager logo
+       inlined (dark variant: pink ring, white prompt). Replace the inner
+       contents to swap the icon — keep the wrapper + its transform. -->
+  <g id="ICON_SLOT" transform="translate(520 100)" filter="url(#softshadow)">
+    <!-- Platter (translucent rounded square) -->
+    <rect x="0" y="0" width="160" height="160" rx="32" ry="32"
+          fill="#FFFFFF" fill-opacity="0.06"
+          stroke="#FFFFFF" stroke-opacity="0.20" stroke-width="1.5"/>
+    <!-- Logo: scale 256→128 and centre inside the 160 platter -->
+    <g transform="translate(80 80) scale(0.5) translate(-128 -128)"
+       fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="12">
+      <g stroke="#d63977">
+        <path d="M 50.06 83.00 A 90 90 0 0 1 109.29 39.97"/>
+        <path d="M 146.71 39.97 A 90 90 0 0 1 205.94 83.00"/>
+        <path d="M 217.51 118.59 A 90 90 0 0 1 194.88 188.22"/>
+        <path d="M 164.60 210.21 A 90 90 0 0 1 91.40 210.21"/>
+        <path d="M 61.12 188.22 A 90 90 0 0 1 38.49 118.59"/>
+        <circle cx="128" cy="38" r="13"/>
+        <circle cx="213.6" cy="100.2" r="13"/>
+        <circle cx="180.9" cy="200.8" r="13"/>
+        <circle cx="75.1" cy="200.8" r="13"/>
+        <circle cx="42.4" cy="100.2" r="13"/>
+      </g>
+      <g stroke="#FFFFFF">
+        <polyline points="100,103 126,128 100,153"/>
+        <line x1="130" y1="153" x2="156" y2="153"/>
+      </g>
+    </g>
+  </g>
+  <!-- ═════════════ /ICON SLOT ═════════════ -->
+
+  <!-- Wordmark + tagline -->
+  <g font-family="ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Inter, sans-serif">
+    <text x="60" y="170" font-size="56" font-weight="800" fill="url(#title)" letter-spacing="-1.5">n8n-manager</text>
+    <text x="60" y="208" font-size="20" font-weight="500" fill="#FFFFFF" fill-opacity="0.78">
+      Backup &#xb7; Restore &#xb7; Migrate &#xb7; Versioned in Git
+    </text>
+    <!-- Pill row: n8n pink + bash green-cyan + amber -->
+    <g transform="translate(60 240)" font-size="12" font-weight="600">
+      <g>
+        <rect x="0" y="0" width="98" height="26" rx="13" fill="#d63977" fill-opacity="0.18" stroke="#d63977" stroke-opacity="0.65"/>
+        <text x="49" y="17" text-anchor="middle" fill="#FFD1E0">Bash CLI</text>
+      </g>
+      <g transform="translate(110 0)">
+        <rect x="0" y="0" width="118" height="26" rx="13" fill="#36B9D5" fill-opacity="0.18" stroke="#69D6E8" stroke-opacity="0.55"/>
+        <text x="59" y="17" text-anchor="middle" fill="#D9F4FA">SQLite + Postgres</text>
+      </g>
+      <g transform="translate(240 0)">
+        <rect x="0" y="0" width="86" height="26" rx="13" fill="#FFB454" fill-opacity="0.18" stroke="#FFD080" stroke-opacity="0.55"/>
+        <text x="43" y="17" text-anchor="middle" fill="#FFE2B5">Self-hosted</text>
+      </g>
+    </g>
+  </g>
+
+  <!-- Right-side meta strip: install one-liner -->
+  <g transform="translate(900 60)" font-family="ui-monospace, SFMono-Regular, Menlo, monospace" font-size="11" fill="#FFFFFF" fill-opacity="0.65">
+    <text x="240" y="0" text-anchor="end">curl -fsSL https://i.nskha.com/install.sh | sudo bash</text>
+    <text x="240" y="22" text-anchor="end" fill-opacity="0.45">portable &#xb7; one-line install</text>
+  </g>
+
+  <!-- Bottom rule -->
+  <line x1="60" y1="320" x2="1140" y2="320" stroke="#FFFFFF" stroke-opacity="0.10"/>
+  <text x="60" y="342" font-family="ui-sans-serif, system-ui, sans-serif" font-size="11"
+        fill="#FFFFFF" fill-opacity="0.5">
+    workflows &#xb7; credentials &#xb7; tags &#xb7; folders &#xb7; projects &#xb7; datatables &#xb7; variables
+  </text>
+  <text x="1140" y="342" text-anchor="end" font-family="ui-monospace, SFMono-Regular, Menlo, monospace"
+        font-size="11" fill="#FFFFFF" fill-opacity="0.5">v5 &#xb7; canonical layout</text>
+</svg>
