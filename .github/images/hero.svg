@@ -47,6 +47,12 @@
       <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
     </filter>
 
+    <!-- Glow for the chase spinner inside the icon -->
+    <filter id="iconGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="2.5" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+
     <!-- Wordmark gradient: pink head → soft pink tail -->
     <linearGradient id="title" x1="0" y1="0" x2="0" y2="1">
       <stop offset="0%"   stop-color="#FFFFFF"/>
@@ -87,24 +93,54 @@
     <rect x="0" y="0" width="160" height="160" rx="32" ry="32"
           fill="#FFFFFF" fill-opacity="0.06"
           stroke="#FFFFFF" stroke-opacity="0.20" stroke-width="1.5"/>
-    <!-- Logo: scale 256→128 and centre inside the 160 platter -->
+    <!-- Logo: scale 256→128 and centre inside the 160 platter (animated) -->
     <g transform="translate(80 80) scale(0.5) translate(-128 -128)"
        fill="none" stroke-linecap="round" stroke-linejoin="round" stroke-width="12">
+      <!-- Base ring: 5 pink arcs -->
       <g stroke="#d63977">
         <path d="M 50.06 83.00 A 90 90 0 0 1 109.29 39.97"/>
         <path d="M 146.71 39.97 A 90 90 0 0 1 205.94 83.00"/>
         <path d="M 217.51 118.59 A 90 90 0 0 1 194.88 188.22"/>
         <path d="M 164.60 210.21 A 90 90 0 0 1 91.40 210.21"/>
         <path d="M 61.12 188.22 A 90 90 0 0 1 38.49 118.59"/>
-        <circle cx="128" cy="38" r="13"/>
-        <circle cx="213.6" cy="100.2" r="13"/>
-        <circle cx="180.9" cy="200.8" r="13"/>
-        <circle cx="75.1" cy="200.8" r="13"/>
-        <circle cx="42.4" cy="100.2" r="13"/>
       </g>
+      <!-- Chase spinner: bright dash circling clockwise -->
+      <path d="M 128 38 A 90 90 0 0 1 128 218 A 90 90 0 0 1 128 38"
+            stroke="#ff8fb8" stroke-dasharray="60 505.5" filter="url(#iconGlow)">
+        <animate attributeName="stroke-dashoffset"
+                 from="0" to="-565.5"
+                 dur="3s" repeatCount="indefinite"/>
+      </path>
+      <!-- Nodes: pulse in clockwise sequence as the spinner reaches them -->
+      <g stroke="#d63977">
+        <circle cx="128" cy="38" r="13">
+          <animate attributeName="r" values="13;19;13;13" keyTimes="0;0.07;0.14;1"
+                   dur="3s" begin="0s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="213.6" cy="100.2" r="13">
+          <animate attributeName="r" values="13;19;13;13" keyTimes="0;0.07;0.14;1"
+                   dur="3s" begin="0.6s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="180.9" cy="200.8" r="13">
+          <animate attributeName="r" values="13;19;13;13" keyTimes="0;0.07;0.14;1"
+                   dur="3s" begin="1.2s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="75.1" cy="200.8" r="13">
+          <animate attributeName="r" values="13;19;13;13" keyTimes="0;0.07;0.14;1"
+                   dur="3s" begin="1.8s" repeatCount="indefinite"/>
+        </circle>
+        <circle cx="42.4" cy="100.2" r="13">
+          <animate attributeName="r" values="13;19;13;13" keyTimes="0;0.07;0.14;1"
+                   dur="3s" begin="2.4s" repeatCount="indefinite"/>
+        </circle>
+      </g>
+      <!-- Bash symbol: chevron static, underscore blinks like a terminal cursor -->
       <g stroke="#FFFFFF">
         <polyline points="100,103 126,128 100,153"/>
-        <line x1="130" y1="153" x2="156" y2="153"/>
+        <line x1="130" y1="153" x2="156" y2="153">
+          <animate attributeName="opacity" values="1;0" keyTimes="0;0.5"
+                   dur="1s" repeatCount="indefinite" calcMode="discrete"/>
+        </line>
       </g>
     </g>
   </g>

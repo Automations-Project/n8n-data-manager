@@ -183,25 +183,157 @@ Keep this file **`chmod 600`** — it holds your PAT and (optionally) your n8n A
 
 ## Usage
 
+### Interactive
+
 ```bash
-# Interactive (gum prompts for every value)
-n8n-manager backup
+n8n-manager                # default = welcome screen + (TTY+gum) menu
+n8n-manager backup         # gum-styled prompts for every required value
 n8n-manager restore
-
-# Non-interactive (CI-friendly)
-n8n-manager backup -c n8n -t ghp_xxx -r user/backups
-n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-layout combined
-n8n-manager restore -c n8n -t ghp_xxx -r user/backups --dry-run
-n8n-manager restore -c n8n -t ghp_xxx -r user/backups --force --delete-missing
-
-# Import a single workflow/bundle from a URL
-n8n-manager import-url --url https://example.com/wf.json -c n8n
-
-# Migrate a v4 backup repo to canonical v5 layout
-n8n-manager migrate -r user/old-v4-backups
 ```
 
-`backup --record` pushes a session recording (typescript + replay tape) to `Backups/records/<session-id>/` in your backup repo and seeds a GitHub Actions workflow that renders GIFs from the tapes.
+### Quick non-interactive recipes
+
+> 📚 Full flag-by-flag reference: **[docs/cli-reference.md](docs/cli-reference.md)**.
+> All examples below are scriptable — drop them into cron, GitHub Actions, a Docker `RUN` line, or a systemd unit. Substitute `ghp_xxx` with a real PAT (or use `--token-file /path` / `--token-stdin` for hardened secret handling).
+
+#### Backup
+
+```bash
+# 1) Default — every entity, canonical layout, push to main
+n8n-manager backup -c n8n -t ghp_xxx -r user/backups
+
+# 2) Read PAT from a 600-mode file (recommended for cron)
+n8n-manager backup -c n8n --token-file /etc/n8n-manager/pat -r user/backups
+
+# 3) Read PAT from stdin (recommended for CI)
+echo "$N8N_PAT" | n8n-manager backup --token-stdin -c n8n -r user/backups
+
+# 4) Workflows only
+n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-type workflows
+
+# 5) Single combined-bundle file (data.n8n.backups)
+n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-layout combined
+
+# 6) Per-workflow bundles (one .n8n.backup per seed workflow + linked deps)
+n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-layout workflow-bundles
+
+# 7) Enterprise + full-DB snapshot (canonical only)
+n8n-manager backup -c n8n -t ghp_xxx -r ops/backups --backup-type full-db
+
+# 8) Incremental (only items changed since last backup; canonical only)
+n8n-manager backup -c n8n -t ghp_xxx -r user/backups --incremental
+
+# 9) One workflow + its linked credentials
+n8n-manager backup -c n8n -t ghp_xxx -r user/backups \
+  --workflow-id "wf_abc123" --include-linked-creds
+
+# 10) Decrypted-credentials backup (private repo only — explicit opt-in)
+n8n-manager backup -c n8n -t ghp_xxx -r private/secure-backups \
+  --backup-type credentials --credential-export-mode decrypted
+```
+
+#### Restore
+
+```bash
+# 1) Default — full overwrite restore (probe picks safest write path)
+n8n-manager restore -c n8n -t ghp_xxx -r user/backups
+
+# 2) Dry-run — print every action, change nothing
+n8n-manager restore -c n8n -t ghp_xxx -r user/backups --dry-run
+
+# 3) Safe — only create entities that don't exist (never overwrite)
+n8n-manager restore -c n8n -t ghp_xxx -r user/backups --restore-mode new-only
+
+# 4) Force destructive cleanup (drop entities missing from backup)
+n8n-manager restore -c n8n -t ghp_xxx -r user/backups --force --delete-missing
+
+# 5) Workflows only, re-create as new entities (strip IDs)
+n8n-manager restore -c n8n -t ghp_xxx -r user/backups \
+  --restore-type workflows --import-as-new
+
+# 6) Legacy v4 backup — bypass v5 adapter (emergency restore)
+n8n-manager restore -c n8n -t ghp_xxx -r user/old-v4-backups --legacy-fallback
+
+# 7) Postgres schema-drift acknowledgement (rare)
+n8n-manager restore -c n8n -t ghp_xxx -r user/backups --allow-schema-drift
+```
+
+#### Import a single payload from a URL
+
+```bash
+# Single workflow JSON or bundle
+n8n-manager import-url --url https://example.com/backup.json -c n8n
+
+# Workflows only from a remote zip
+n8n-manager import --url https://example.com/backup.zip -c n8n --restore-type workflows
+```
+
+#### Edit workflow files (`.n8n`) locally
+
+```bash
+# Validate every workflow in a directory; fail on warnings
+n8n-manager workflow validate --all -d ./workflows --strict --json
+
+# Strip pinned execution data (size + sample-data leaks)
+n8n-manager workflow clean-pins --all -d ./workflows
+
+# Audit-only: what would be cleaned?
+n8n-manager workflow clean-pins --all -d ./workflows --check-only
+
+# Toggle a setting on every workflow
+n8n-manager workflow settings --all -d ./workflows -s mcpEnabled=false
+
+# Activate every workflow + push to a running container
+n8n-manager workflow publish --all -d ./workflows --live -c n8n
+
+# Deactivate every workflow live
+n8n-manager workflow unpublish --all -d ./workflows --live -c n8n
+
+# Diff two workflow files
+n8n-manager workflow compare --file-a ./v1.n8n --file-b ./v2.n8n
+
+# Render a dependency graph as Mermaid markdown
+n8n-manager workflow graph -d ./workflows --format mermaid -o deps.md
+
+# Dependency report — orphans, cycles, missing refs
+n8n-manager workflow report -d ./workflows --orphans --cycles --missing
+```
+
+#### Migrate
+
+```bash
+# Convert a v4 backup repo to v5 canonical layout (sibling branch)
+n8n-manager migrate --source /path/to/v4-backup-repo
+
+# Same, but write to a fresh output dir / new git repo
+n8n-manager migrate --source /path/to/v4-backup-repo --target /path/to/v5-output
+
+# Audit only — print summary, write nothing
+n8n-manager migrate --source /path/to/v4-backup-repo --report-only --format markdown
+
+# Resume an interrupted migration
+n8n-manager migrate --source /path/to/v4-backup-repo --resume
+
+# Translate a v4 config file to v5 schema in place (atomic + idempotent)
+n8n-manager migrate-config
+
+# Preview the rewrite without touching disk
+n8n-manager migrate-config --dry-run
+```
+
+#### System
+
+```bash
+n8n-manager update                # check + apply latest stable
+n8n-manager update --check        # check only, don't install
+n8n-manager update --channel dev  # install from main-branch HEAD
+n8n-manager update --rollback     # restore the prior v4 binary from .v4.bak
+n8n-manager uninstall             # remove n8n-manager + gum (keeps your config)
+```
+
+Add `--dry-run` to **any** destructive command for a zero-side-effect preview. Add `--verbose` (or `--trace`) for detailed logging. Add `--log-file <path>` to append a timestamped audit log.
+
+`backup --record` additionally pushes a session recording (typescript + replay tape) to `Backups/records/<session-id>/` in your backup repo and seeds a GitHub Actions workflow that renders GIFs from the tapes.
 
 <p align="center">
   <picture>
