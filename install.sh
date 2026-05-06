@@ -653,6 +653,19 @@ main() {
     print_summary "$install_dir" "$has_gum"
 
     success "Installation complete!"
+
+    # Patch-34: hand the user straight to the binary's welcome screen so
+    # the very first thing they see post-install is "what can I do?".
+    # The welcome command prints a static command summary in every mode
+    # (works fine over the curl|sudo bash pipe — non-TTY just skips the
+    # gum menu and exits 0). For portable installs the binary is in
+    # ${install_dir}/n8n-manager, not on PATH yet — invoke it by absolute
+    # path so we don't depend on shell rehash.
+    local installed_bin="${install_dir}/n8n-manager"
+    if [ -x "$installed_bin" ]; then
+        echo ""
+        "$installed_bin" 2>/dev/null || true
+    fi
 }
 
 main "$@"

@@ -23,6 +23,9 @@ n8n_manager_usage() {
   printf "  n8n-manager --version | -v\n"
   echo
   # :command.usage_commands
+  printf "%s\n" "Commands:"
+  printf "  %s   Show the welcome / quick-start screen (default when no command is given) (default)\n" "welcome       "
+  echo
   printf "%s\n" "Data Commands:"
   printf "  %s   Backup n8n data to GitHub\n" "backup        "
   printf "  %s   Restore n8n data from GitHub\n" "restore       "
@@ -52,6 +55,45 @@ n8n_manager_usage() {
     echo
     printf "  %s\n" "--version, -v"
     printf "    Show version number\n"
+    echo
+
+  fi
+}
+
+# :command.usage
+n8n_manager_welcome_usage() {
+  printf "n8n-manager welcome - Show the welcome / quick-start screen (default when no command is given)\n\n"
+
+  printf "%s\n" "Usage:"
+  printf "  n8n-manager [welcome] [OPTIONS]\n"
+  printf "  n8n-manager welcome --help | -h\n"
+  echo
+
+  # :command.long_usage
+  if [[ -n "$long_usage" ]]; then
+    # :command.usage_options
+    printf "%s\n" "Options:"
+
+    # :command.usage_flags
+    # :flag.usage
+    printf "  %s\n" "--verbose"
+    printf "    Enable detailed debug logging\n"
+    echo
+
+    # :flag.usage
+    printf "  %s\n" "--trace"
+    printf "    Enable bash trace debugging\n"
+    echo
+
+    # :command.usage_fixed_flags
+    printf "  %s\n" "--help, -h"
+    printf "    Show this help\n"
+    echo
+
+    # :command.usage_examples
+    printf "%s\n" "Examples:"
+    printf "  n8n-manager\n"
+    printf "  n8n-manager welcome\n"
     echo
 
   fi
@@ -16768,6 +16810,73 @@ _parse_workflow_metadata_basic() {
 
 # :command.command_functions
 # :command.function
+n8n_manager_welcome_command() {
+
+  # src/welcome_command.sh
+
+  set -Eeuo pipefail
+  IFS=$'\n\t'
+
+  SKIP_DOCKER_CHECK=true
+  setup_globals
+
+  ui_banner "n8n-manager" "v${version}"
+  echo ""
+
+  # Static command summary — printed in every mode so it's always visible.
+  cat <<'EOF'
+  Backup, restore, and migrate n8n Docker instances — versioned in Git.
+
+  Get started:
+
+    n8n-manager backup       Back up workflows, credentials, tags, etc. to a Git repo
+    n8n-manager restore      Restore from a backup repo into a running n8n container
+    n8n-manager migrate      Convert v4 backup repos to canonical v5 layout
+    n8n-manager workflow     Local .n8n file ops (graph, compare, validate, …)
+    n8n-manager update       Check for + apply self-updates (atomic, with .v4.bak rollback)
+    n8n-manager install      Re-install or change install location
+    n8n-manager uninstall    Remove n8n-manager and gum
+
+  Detailed help for any command:
+
+    n8n-manager <command> --help
+
+  Configuration: ~/.config/n8n-manager/config (XDG; chmod 600 — holds your PAT).
+  Documentation: https://github.com/Automations-Project/n8n-data-manager
+EOF
+
+  # When stdin is a terminal AND gum is on PATH, offer a one-shot menu so
+  # operators can jump straight into a command without re-typing. Skipped
+  # in non-TTY contexts (curl|bash, CI) where prompting would just hang
+  # or print noise.
+  if [ -t 0 ] && [ -t 1 ] && [ "${HAS_GUM:-false}" = "true" ]; then
+      echo ""
+      choice=$(
+          gum choose \
+              --header "Pick one to start (or Esc to exit):" \
+              "Backup n8n data" \
+              "Restore from a backup" \
+              "Migrate a v4 backup repo" \
+              "Check for updates" \
+              "Show all commands and flags" \
+              "Exit" \
+          2>/dev/null || true
+      )
+      case "$choice" in
+          "Backup n8n data")              exec "$0" backup ;;
+          "Restore from a backup")        exec "$0" restore ;;
+          "Migrate a v4 backup repo")     exec "$0" migrate ;;
+          "Check for updates")            exec "$0" update ;;
+          "Show all commands and flags")  exec "$0" --help ;;
+          *) exit 0 ;;
+      esac
+  fi
+
+  exit 0
+
+}
+
+# :command.function
 n8n_manager_backup_command() {
 
   # src/backup_command.sh
@@ -20515,7 +20624,13 @@ parse_requirements() {
   action=${1:-}
 
   case $action in
-    -*) ;;
+
+    welcome)
+      action="welcome"
+      shift
+      n8n_manager_welcome_parse_requirements "$@"
+      shift $#
+      ;;
 
     backup)
       action="backup"
@@ -20587,8 +20702,9 @@ parse_requirements() {
       ;;
 
     *)
-      printf "invalid command: %s\n" "$action" >&2
-      exit 1
+      action="welcome"
+      n8n_manager_welcome_parse_requirements "$@"
+      shift $#
       ;;
 
   esac
@@ -20597,6 +20713,68 @@ parse_requirements() {
   while [[ $# -gt 0 ]]; do
     key="$1"
     case "$key" in
+
+      -?*)
+        printf "invalid option: %s\n" "$key" >&2
+        exit 1
+        ;;
+
+      *)
+        # :command.parse_requirements_case
+        # :command.parse_requirements_case_simple
+        printf "invalid argument: %s\n" "$key" >&2
+        exit 1
+
+        ;;
+
+    esac
+  done
+
+}
+
+# :command.parse_requirements
+n8n_manager_welcome_parse_requirements() {
+  local key
+
+  # :command.fixed_flags_filter
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      --help | -h)
+        long_usage=yes
+        n8n_manager_welcome_usage
+        exit
+        ;;
+
+      *)
+        break
+        ;;
+
+    esac
+  done
+
+  # :command.command_filter
+  action="welcome"
+
+  # :command.parse_requirements_while
+  while [[ $# -gt 0 ]]; do
+    key="$1"
+    case "$key" in
+      # :flag.case
+      --verbose)
+
+        # :flag.case_no_arg
+        args['--verbose']=1
+        shift
+        ;;
+
+      # :flag.case
+      --trace)
+
+        # :flag.case_no_arg
+        args['--trace']=1
+        shift
+        ;;
 
       -?*)
         printf "invalid option: %s\n" "$key" >&2
@@ -24341,6 +24519,7 @@ run() {
   parse_requirements "${input[@]}"
 
   case "$action" in
+    "welcome") n8n_manager_welcome_command ;;
     "backup") n8n_manager_backup_command ;;
     "restore") n8n_manager_restore_command ;;
     "import-url") n8n_manager_import_url_command ;;
