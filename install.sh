@@ -5,7 +5,9 @@
 ##   System install:       curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- --system
 ##   User install:         curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- --user
 ##   Custom location:      curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- --prefix /opt/n8n-manager
-##   Non-interactive:      curl -fsSL https://raw.githubusercontent.com/.../install.sh | bash -s -- --yes
+##   Standard:             curl -fsSL https://i.nskha.com/install.sh | sudo bash
+##   User install (no sudo): curl -fsSL https://i.nskha.com/install.sh | bash -s -- --user
+##   Uninstall:            curl -fsSL https://i.nskha.com/install.sh | sudo bash -s -- --uninstall --yes
 ##
 ## What it does:
 ##   1. Downloads n8n-manager script from GitHub releases
@@ -529,7 +531,8 @@ main() {
     local prefix=""            # custom install prefix
     local do_uninstall=false
     local skip_gum=false
-    local _yes=false           # D-19: explicit non-interactive consent
+    local _yes=false           # required only for the destructive --uninstall path
+                               # (running curl|sudo bash IS consent for fresh install)
 
     # Parse arguments
     while [ $# -gt 0 ]; do
@@ -553,7 +556,7 @@ main() {
                 echo "  --prefix PATH  Install to custom directory"
                 echo ""
                 echo "Options:"
-                echo "  --yes, -y      Non-interactive consent (required when stdin is non-TTY)"
+                echo "  --yes, -y      Skip confirmation prompts (required for --uninstall over a pipe)"
                 echo "  --no-gum       Skip gum installation (basic UI mode)"
                 echo "  --uninstall    Remove n8n-manager and gum"
                 echo "  --help, -h     Show this help"
@@ -566,19 +569,18 @@ main() {
         shift
     done
 
-    # D-19: non-TTY guard — require --yes when stdin is not a TTY.
-    # Triggered by `curl ... | bash` because the pipe consumes stdin. The
-    # error suggests the exact one-liner the user almost certainly typed
-    # so they can copy-paste a working version.
-    if [ ! -t 0 ] && [ "$_yes" != "true" ]; then
-        printf '\n%s\n' "Non-interactive install detected (stdin is not a TTY)." >&2
-        printf '%s\n'   "Add --yes to consent. Working one-liner:" >&2
-        printf '\n  %s\n\n' "curl -fsSL https://i.nskha.com/install.sh | sudo bash -s -- --yes" >&2
-        fatal "consent flag required"
-    fi
-
-    # Handle uninstall
+    # D-19 (relaxed): the consent guard now only fires for --uninstall,
+    # which is the actually-destructive path. Fresh installs proceed
+    # without --yes — running `curl … | sudo bash` IS the consent,
+    # matching the convention every other installer uses (rustup,
+    # oh-my-zsh, get.docker.com, deno, etc.).
     if [ "$do_uninstall" = "true" ]; then
+        if [ ! -t 0 ] && [ "$_yes" != "true" ]; then
+            printf '\n%s\n' "Uninstall over a pipe needs explicit --yes (destructive operation)." >&2
+            printf '%s\n'   "Working one-liner:" >&2
+            printf '\n  %s\n\n' "curl -fsSL https://i.nskha.com/install.sh | sudo bash -s -- --uninstall --yes" >&2
+            fatal "consent flag required for --uninstall"
+        fi
         uninstall
         exit 0
     fi
