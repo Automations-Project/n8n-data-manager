@@ -40,6 +40,7 @@
 
 <p align="center">
   Latest pinned version: <code><!-- AUTOVER:start -->5.0.0<!-- AUTOVER:end --></code>
+  &middot; <a href="docs/cli-reference.md">CLI Reference</a>
   &middot; <a href="CHANGELOG.md">Changelog</a>
   &middot; <a href="MIGRATION.md">Migrating from v4</a>
 </p>
