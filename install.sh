@@ -566,9 +566,15 @@ main() {
         shift
     done
 
-    # D-19: non-TTY guard — require --yes when stdin is not a TTY
+    # D-19: non-TTY guard — require --yes when stdin is not a TTY.
+    # Triggered by `curl ... | bash` because the pipe consumes stdin. The
+    # error suggests the exact one-liner the user almost certainly typed
+    # so they can copy-paste a working version.
     if [ ! -t 0 ] && [ "$_yes" != "true" ]; then
-        fatal "Non-interactive mode requires --yes (e.g., bash install.sh --yes)"
+        printf '\n%s\n' "Non-interactive install detected (stdin is not a TTY)." >&2
+        printf '%s\n'   "Add --yes to consent. Working one-liner:" >&2
+        printf '\n  %s\n\n' "curl -fsSL https://i.nskha.com/install.sh | sudo bash -s -- --yes" >&2
+        fatal "consent flag required"
     fi
 
     # Handle uninstall

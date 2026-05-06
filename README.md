@@ -1,9 +1,9 @@
 <!--
   README.md — Public-mirror landing page for `Automations-Project/n8n-data-manager`.
   This file ships via release-manifest.txt; the publish workflow auto-bumps the
-  version between <!-- AUTOVER:start --> markers on every release. Don't hand-edit
+  version between <!-- AUTOVER:start -\-> markers on every release. Don't hand-edit
   the version number here — change src/initialize.sh:VERSION and CI rewrites this.
--->
+  -->
 
 <p align="center">
   <picture>
@@ -59,43 +59,67 @@ Built for self-hosted n8n operators who want **versioned, recoverable backups th
 ## Quick start
 
 ```bash
-curl -fsSL https://i.nskha.com/install.sh | sudo bash
+curl -fsSL https://i.nskha.com/install.sh | sudo bash -s -- --yes
 ```
 
 Drops the `n8n-manager` executable into `/usr/local/bin` and (on first run) silently auto-installs `gum` to `~/.local/share/n8n-manager/bin/` for the styled TUI.
 
-Verify:
+Verify the install — `n8n-manager` is on `PATH` after this so you can call it without a path prefix:
 
 ```bash
-n8n-manager --version
+n8n-manager --version       # → n8n-manager 5.0.0+...
 n8n-manager --help
 ```
 
 > [!TIP]
-> **Why `-fsSL` and not `-sSL`?** The `-f` flag makes curl fail-fast on any HTTP error (challenge page, rate limit, transient origin error) instead of piping HTML into your shell. Always use `-fsSL` for `curl … | bash` pipelines.
+> **The two flag patterns:**
+> - `-fsSL` on **curl** — fail-fast on any HTTP error so a WAF challenge / 502 never gets piped to bash. Always use this for `curl … | bash` pipelines.
+> - `-s -- --yes` on **bash** — `-s` tells bash "read script from stdin", `--` ends bash's own option parsing, then `--yes` is forwarded to install.sh as its consent flag. Without it install.sh refuses non-interactive runs (D-19 safety).
 
-### Install matrix — pick a binary line
+### Install matrix — every line is copy-paste ready
 
 | Goal | Command | Tracks |
 |---|---|---|
-| **Full system install** (most common) | `curl -fsSL https://i.nskha.com/install.sh \| sudo bash` | latest **release tag** on `main` |
-| **Portable binary** (no installer, no PATH change) | `curl -fsSL https://i.nskha.com/n8n-manager -o n8n-manager && chmod +x n8n-manager` | latest **commit on `main`** |
-| **Alpha pre-release binary** | `curl -fsSL 'https://i.nskha.com/n8n-manager?alpha' -o n8n-manager && chmod +x n8n-manager` | latest commit on `alpha` |
-| **Legacy v4 monolith** | `curl -fsSL 'https://i.nskha.com/n8n-manager?legacy' -o n8n-manager && chmod +x n8n-manager` | frozen `legacy` branch |
+| **Full system install** (most common) | `curl -fsSL https://i.nskha.com/install.sh \| sudo bash -s -- --yes` | latest **release tag** on `main` |
+| **Same, user install** (no sudo) | `curl -fsSL https://i.nskha.com/install.sh \| bash -s -- --yes --user` | latest release tag on `main` |
+| **Portable binary** (system PATH) | `sudo curl -fsSL https://i.nskha.com/n8n-manager -o /usr/local/bin/n8n-manager && sudo chmod +x /usr/local/bin/n8n-manager` | latest **commit on `main`** |
+| **Portable binary** (user PATH) | `mkdir -p ~/.local/bin && curl -fsSL https://i.nskha.com/n8n-manager -o ~/.local/bin/n8n-manager && chmod +x ~/.local/bin/n8n-manager` | latest commit on `main` |
+| **Alpha pre-release binary** | `sudo curl -fsSL 'https://i.nskha.com/n8n-manager?alpha' -o /usr/local/bin/n8n-manager && sudo chmod +x /usr/local/bin/n8n-manager` | latest commit on `alpha` |
+| **Legacy v4 monolith** | `sudo curl -fsSL 'https://i.nskha.com/n8n-manager?legacy' -o /usr/local/bin/n8n-manager && sudo chmod +x /usr/local/bin/n8n-manager` | frozen `legacy` branch |
 
 > [!NOTE]
-> `install.sh` is **release-pinned** — it downloads the `n8n-manager` binary from a tagged GitHub release (the version baked into the script). The portable `/n8n-manager` paths are **branch-tip** — they redirect to GitHub raw on the requested branch's HEAD. Pick `install.sh` for production stability, the portable URL for the absolute latest, or `?alpha` to test pre-release changes.
+> **Two delivery channels, two semantics:**
+> - **`install.sh`** is **release-pinned** — it downloads the binary from a tagged GitHub release (version baked into the script) and writes a structured install with PATH wiring + gum auto-install. Pick this for production.
+> - **`/n8n-manager` direct** is **branch-tip** — the worker 302-redirects to GitHub raw on the requested branch's HEAD. No PATH wiring, no gum. Pick this for docker images, CI runners, ad-hoc upgrades, or testing alpha/legacy branches.
 
 The `i.nskha.com` endpoints are served by a Cloudflare Worker that 302-redirects `/n8n-manager` → the GitHub raw URL of the requested branch. Branch names are allow-listed (`main`, `alpha`, `legacy`) so arbitrary `?branch=…` values cannot escape the public mirror.
 
-#### `install.sh` flags
+### Verify your install
+
+After **any** of the install commands above, this should print the version:
+
+```bash
+n8n-manager --version
+```
+
+If you get **`command not found`**, the binary isn't on `PATH`. That happens when:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `command not found` after `curl ... -o n8n-manager` (no path prefix on `-o`) | Binary is in your current directory but `.` isn't on PATH | Use `./n8n-manager --version` from the same directory, **or** move it: `sudo mv n8n-manager /usr/local/bin/ && sudo chmod +x /usr/local/bin/n8n-manager` |
+| `command not found` after a `~/.local/bin` install | `~/.local/bin` not on your shell's PATH | Add to `~/.bashrc` / `~/.zshrc`: `export PATH="$HOME/.local/bin:$PATH"`, then `source` it or open a new shell |
+
+If you get **`Non-interactive install detected … Add --yes to consent`**, you forgot the `-s -- --yes` after `bash`. Re-run with the canonical one-liner from "Quick start".
+
+### `install.sh` flags
 
 ```
 --system, -s   Force install to /usr/local/bin
 --user         Force install to ~/.local/bin
 --portable, -p Install into current directory; no PATH change
 --prefix PATH  Install to custom directory
---yes, -y      Non-interactive consent (required when stdin isn't a TTY)
+--yes, -y      Non-interactive consent (required when stdin isn't a TTY,
+                 i.e. always when you pipe from curl)
 --no-gum       Skip gum auto-install
 --uninstall    Remove n8n-manager and gum
 --help, -h     Print usage
