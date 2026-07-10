@@ -6335,10 +6335,10 @@ select_container() {
         # Truncate long values to fit columns
         local disp_name="$name" disp_image="$image"
         if [ ${#disp_name} -gt $((_cw_name - 2)) ]; then
-            disp_name="${disp_name:0:$((_cw_name - 3))}…"
+            disp_name="${disp_name:0:$((_cw_name - 3))}~"
         fi
         if [ ${#disp_image} -gt $((_cw_image - 2)) ]; then
-            disp_image="${disp_image:0:$((_cw_image - 3))}…"
+            disp_image="${disp_image:0:$((_cw_image - 3))}~"
         fi
         # Build aligned row prefix (ID, Name, Image, Status)
         # SC2059: $_row_fmt is an intentional printf format string built dynamically from
@@ -6426,6 +6426,7 @@ ${short_id},${disp_name},${disp_image},${short_status},${ctype}"
     if $HAS_GUM; then
         selected=$(printf '%s\n' "${display_items[@]}" | gum filter \
             --placeholder "Type to search containers..." \
+            --no-fuzzy \
             --indicator "▸" \
             --indicator.foreground $THEME_PRIMARY \
             --match.foreground $THEME_PRIMARY \
