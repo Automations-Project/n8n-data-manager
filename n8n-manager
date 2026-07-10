@@ -10149,12 +10149,20 @@ setup_session_recording() {
         check_install_mode
     fi
 
-    # Interactive prompt when user did not pass an explicit flag.
-    if [ -t 0 ] && [ -t 1 ] && [[ -z "${ARG_RECORD:-}" ]]; then
-        if ui_confirm "Record this session for sharing?" "Record" "Skip"; then
-            ARG_RECORD=1
-        fi
-    fi
+    # Auto-prompt to record only for the data operations recording is designed
+    # for (backup/restore/import-url). Read-only screens (welcome), local file
+    # ops (workflow *), and self-management (install/update/uninstall/migrate)
+    # never auto-record. An explicit --record / CONF_RECORD (ARG_RECORD already
+    # set) still records any command that supports the flag.
+    case "${action:-}" in
+        backup|restore|import-url)
+            if [ -t 0 ] && [ -t 1 ] && [[ -z "${ARG_RECORD:-}" ]]; then
+                if ui_confirm "Record this session for sharing?" "Record" "Skip"; then
+                    ARG_RECORD=1
+                fi
+            fi
+            ;;
+    esac
 
     [[ "${ARG_RECORD:-}" == "1" ]] || return 0
 
