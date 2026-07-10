@@ -1,0 +1,1657 @@
+{
+  "tool": "n8n-manager",
+  "version": "5.0.0",
+  "description": "Backup & Restore manager for n8n Docker instances via GitHub",
+  "generated": "2026-07-10T15:18:26Z",
+  "source": "n8n-manager CLI definitions",
+  "generator": "scripts/gen-cli-summary.py",
+  "schema": "n8n-manager-cli-summary/v1",
+  "global_flags": [
+    {
+      "long": "--trace",
+      "help": "Enable bash trace debugging"
+    },
+    {
+      "long": "--verbose",
+      "help": "Enable detailed debug logging"
+    }
+  ],
+  "commands": [
+    {
+      "name": "welcome",
+      "full_name": "welcome",
+      "help": "Show the welcome / quick-start screen (default when no command is given)",
+      "default": true,
+      "examples": [
+        "n8n-manager",
+        "n8n-manager welcome"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        }
+      ]
+    },
+    {
+      "name": "backup",
+      "full_name": "backup",
+      "group": "Data",
+      "help": "Backup n8n data to GitHub",
+      "default": false,
+      "examples": [
+        "n8n-manager backup --container n8n --token ghp_xxx --repo user/backups",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-type workflows",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-layout combined",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-layout workflow-bundles --workflow-id \"wf123\"",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-type credentials --credential-export-mode encrypted",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --backup-type credentials --credential-export-mode decrypted",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --workflow-id \"wf123\" --include-linked-creds",
+        "n8n-manager backup -c n8n -t ghp_xxx -r user/backups --incremental"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--record",
+          "help": "Record this command session for sharing"
+        },
+        {
+          "long": "--record-output",
+          "arg": "path",
+          "help": "Directory for session recording artifacts"
+        },
+        {
+          "long": "--container",
+          "short": "-c",
+          "arg": "name",
+          "help": "Target Docker container ID or name"
+        },
+        {
+          "long": "--token",
+          "short": "-t",
+          "arg": "pat",
+          "help": "GitHub Personal Access Token"
+        },
+        {
+          "long": "--repo",
+          "short": "-r",
+          "arg": "repo",
+          "help": "GitHub repository (user/repo format)"
+        },
+        {
+          "long": "--branch",
+          "short": "-b",
+          "arg": "branch",
+          "default": "main",
+          "help": "GitHub branch"
+        },
+        {
+          "long": "--n8n-api-key",
+          "arg": "key",
+          "help": "Optional n8n API key override (auto-detect used by default)"
+        },
+        {
+          "long": "--n8n-api-url",
+          "arg": "url",
+          "help": "Optional n8n API base URL override"
+        },
+        {
+          "long": "--force",
+          "help": "Force push when remote conflicts are detected"
+        },
+        {
+          "long": "--backup-type",
+          "arg": "type",
+          "default": "all",
+          "allowed": [
+            "all",
+            "workflows",
+            "credentials",
+            "enterprise",
+            "full-db"
+          ],
+          "help": "Type of data to backup (enterprise=enterprise-compatible metadata mode, full-db=entire database)"
+        },
+        {
+          "long": "--backup-layout",
+          "arg": "mode",
+          "default": "canonical",
+          "allowed": [
+            "canonical",
+            "combined",
+            "workflow-bundles"
+          ],
+          "help": "Backup output layout (canonical=source-control directories, combined=data.n8n.backups, workflow-bundles=<workflow>.n8n.backup)"
+        },
+        {
+          "long": "--credential-export-mode",
+          "arg": "mode",
+          "default": "stubs",
+          "allowed": [
+            "stubs",
+            "encrypted",
+            "decrypted"
+          ],
+          "help": "Credential export format (stubs=enterprise compatible default, encrypted=full encrypted payload, decrypted=full plaintext payload)"
+        },
+        {
+          "long": "--separate-files",
+          "help": "Legacy compatibility flag (canonical backup always uses separate JSON files)"
+        },
+        {
+          "long": "--incremental",
+          "help": "Only backup items changed since last backup"
+        },
+        {
+          "long": "--workflow-id",
+          "arg": "id",
+          "help": "Export specific workflow ID(s), comma-separated"
+        },
+        {
+          "long": "--credential-id",
+          "arg": "id",
+          "help": "Export specific credential ID(s), comma-separated"
+        },
+        {
+          "long": "--include-linked-creds",
+          "help": "Auto-include linked credentials when backing up workflows"
+        },
+        {
+          "long": "--only-new",
+          "help": "Only backup items not already in the GitHub repo"
+        },
+        {
+          "long": "--import-as-new",
+          "help": "Strip IDs from exported data"
+        },
+        {
+          "long": "--select",
+          "help": "Interactively select specific workflows/credentials to backup"
+        },
+        {
+          "long": "--token-file",
+          "arg": "path",
+          "help": "Read GitHub PAT from file (file must have mode 600). Preferred over --token to avoid token leaks via /proc/cmdline."
+        },
+        {
+          "long": "--token-stdin",
+          "help": "Read GitHub PAT from stdin. Refused if stdin is /dev/null (prevents silent empty-PAT passes)."
+        }
+      ]
+    },
+    {
+      "name": "restore",
+      "full_name": "restore",
+      "group": "Data",
+      "help": "Restore n8n data from GitHub",
+      "default": false,
+      "examples": [
+        "n8n-manager restore --container n8n --token ghp_xxx --repo user/backups",
+        "n8n-manager restore -c n8n -t ghp_xxx -r user/backups --restore-type workflows",
+        "n8n-manager restore -c n8n -t ghp_xxx -r user/backups --restore-type enterprise",
+        "n8n-manager restore -c n8n -t ghp_xxx -r user/backups --restore-mode new-only",
+        "n8n-manager restore -c n8n -t ghp_xxx -r user/backups --import-as-new"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--record",
+          "help": "Record this command session for sharing"
+        },
+        {
+          "long": "--record-output",
+          "arg": "path",
+          "help": "Directory for session recording artifacts"
+        },
+        {
+          "long": "--container",
+          "short": "-c",
+          "arg": "name",
+          "help": "Target Docker container ID or name"
+        },
+        {
+          "long": "--token",
+          "short": "-t",
+          "arg": "pat",
+          "help": "GitHub Personal Access Token"
+        },
+        {
+          "long": "--repo",
+          "short": "-r",
+          "arg": "repo",
+          "help": "GitHub repository (user/repo format)"
+        },
+        {
+          "long": "--branch",
+          "short": "-b",
+          "arg": "branch",
+          "default": "main",
+          "help": "GitHub branch"
+        },
+        {
+          "long": "--n8n-api-key",
+          "arg": "key",
+          "help": "Optional n8n API key override (auto-detect used by default)"
+        },
+        {
+          "long": "--n8n-api-url",
+          "arg": "url",
+          "help": "Optional n8n API base URL override"
+        },
+        {
+          "long": "--force",
+          "help": "Override conflicts for canonical restore (required for destructive actions)"
+        },
+        {
+          "long": "--delete-missing",
+          "help": "Delete metadata resources missing from backup (requires --force)"
+        },
+        {
+          "long": "--restore-type",
+          "arg": "type",
+          "default": "all",
+          "allowed": [
+            "all",
+            "workflows",
+            "credentials",
+            "enterprise",
+            "full-db"
+          ],
+          "help": "Type of data to restore (enterprise=enterprise-compatible metadata mode, full-db=entire database)"
+        },
+        {
+          "long": "--restore-mode",
+          "arg": "mode",
+          "default": "overwrite",
+          "allowed": [
+            "overwrite",
+            "new-only",
+            "merge"
+          ],
+          "help": "How to handle existing data"
+        },
+        {
+          "long": "--separate-files",
+          "help": "Import from individual JSON files"
+        },
+        {
+          "long": "--import-as-new",
+          "help": "Import as new copies (strips IDs)"
+        },
+        {
+          "long": "--only-new",
+          "help": "Only restore items not in current n8n instance"
+        },
+        {
+          "long": "--workflow-id",
+          "arg": "id",
+          "help": "Restore specific workflow ID(s)"
+        },
+        {
+          "long": "--credential-id",
+          "arg": "id",
+          "help": "Restore specific credential ID(s)"
+        },
+        {
+          "long": "--user-id",
+          "arg": "id",
+          "help": "Assign imported items to user"
+        },
+        {
+          "long": "--project-id",
+          "arg": "id",
+          "help": "Assign imported items to project"
+        },
+        {
+          "long": "--select",
+          "help": "Interactively select specific workflows/credentials to restore"
+        },
+        {
+          "long": "--legacy-fallback",
+          "help": "Skip the v4-shape adapter on legacy/unknown source repos and use the pre-v5 import path directly (emergency-restore semantics; reduced validation)."
+        },
+        {
+          "long": "--accept-legacy-partial",
+          "help": "Allow restoring from a mixed v4/v5 source repo (legacy-partial shape) by treating v4 markers as authoritative and ignoring partial canonical files."
+        },
+        {
+          "long": "--allow-schema-drift",
+          "help": "Allow DB-fallback write operations even when the n8n migrations-table hash does not match the pinned-tested set. WARNING: drift mode may corrupt data. Use only when you understand the schema changes."
+        },
+        {
+          "long": "--unsafe-decrypted-credentials",
+          "help": "Allow export of decrypted plaintext credentials during pre-restore snapshot. Requires explicit opt-in; credentials are still written with umask 077 and shredded on cleanup."
+        },
+        {
+          "long": "--token-file",
+          "arg": "path",
+          "help": "Read GitHub PAT from file (file must have mode 600). Preferred over --token to avoid token leaks via /proc/cmdline."
+        },
+        {
+          "long": "--token-stdin",
+          "help": "Read GitHub PAT from stdin. Refused if stdin is /dev/null (prevents silent empty-PAT passes)."
+        }
+      ]
+    },
+    {
+      "name": "import-url",
+      "full_name": "import-url",
+      "group": "Data",
+      "help": "Import n8n data from a direct URL (.json or .zip)",
+      "alias": "import",
+      "default": false,
+      "examples": [
+        "n8n-manager import-url --url https://example.com/backup.json --container n8n",
+        "n8n-manager import --url https://example.com/backup.zip -c n8n --restore-type workflows"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--record",
+          "help": "Record this command session for sharing"
+        },
+        {
+          "long": "--record-output",
+          "arg": "path",
+          "help": "Directory for session recording artifacts"
+        },
+        {
+          "long": "--url",
+          "short": "-u",
+          "arg": "url",
+          "help": "URL to .json or .zip backup file"
+        },
+        {
+          "long": "--container",
+          "short": "-c",
+          "arg": "name",
+          "help": "Target Docker container ID or name"
+        },
+        {
+          "long": "--n8n-api-key",
+          "arg": "key",
+          "help": "Optional n8n API key override (auto-detect used by default)"
+        },
+        {
+          "long": "--n8n-api-url",
+          "arg": "url",
+          "help": "Optional n8n API base URL override"
+        },
+        {
+          "long": "--force",
+          "help": "Override conflicts for canonical restore (required for destructive actions)"
+        },
+        {
+          "long": "--delete-missing",
+          "help": "Delete metadata resources missing from backup (requires --force)"
+        },
+        {
+          "long": "--restore-type",
+          "arg": "type",
+          "default": "all",
+          "allowed": [
+            "all",
+            "workflows",
+            "credentials",
+            "enterprise",
+            "full-db"
+          ],
+          "help": "Type of data to import (enterprise=enterprise-compatible metadata mode, full-db=entire database)"
+        },
+        {
+          "long": "--restore-mode",
+          "arg": "mode",
+          "default": "overwrite",
+          "allowed": [
+            "overwrite",
+            "new-only",
+            "merge"
+          ],
+          "help": "How to handle existing data"
+        },
+        {
+          "long": "--separate-files",
+          "help": "Import from individual JSON files"
+        },
+        {
+          "long": "--import-as-new",
+          "help": "Import as new copies (strips IDs)"
+        },
+        {
+          "long": "--only-new",
+          "help": "Only import items not in current n8n instance"
+        },
+        {
+          "long": "--user-id",
+          "arg": "id",
+          "help": "Assign imported items to user"
+        },
+        {
+          "long": "--project-id",
+          "arg": "id",
+          "help": "Assign imported items to project"
+        },
+        {
+          "long": "--legacy-fallback",
+          "help": "Skip the v4-shape adapter on legacy/unknown source repos and use the pre-v5 import path directly (emergency-restore semantics; reduced validation)."
+        },
+        {
+          "long": "--accept-legacy-partial",
+          "help": "Allow restoring from a mixed v4/v5 source repo (legacy-partial shape) by treating v4 markers as authoritative and ignoring partial canonical files."
+        },
+        {
+          "long": "--allow-schema-drift",
+          "help": "Allow DB-fallback write operations even when the n8n migrations-table hash does not match the pinned-tested set. WARNING: drift mode may corrupt data. Use only when you understand the schema changes."
+        },
+        {
+          "long": "--unsafe-decrypted-credentials",
+          "help": "Allow export of decrypted plaintext credentials during pre-restore snapshot. Requires explicit opt-in; credentials are still written with umask 077 and shredded on cleanup."
+        },
+        {
+          "long": "--token-file",
+          "arg": "path",
+          "help": "Read GitHub PAT from file (file must have mode 600). Preferred over --token to avoid token leaks via /proc/cmdline."
+        },
+        {
+          "long": "--token-stdin",
+          "help": "Read GitHub PAT from stdin. Refused if stdin is /dev/null (prevents silent empty-PAT passes)."
+        }
+      ]
+    },
+    {
+      "name": "install",
+      "full_name": "install",
+      "group": "System",
+      "help": "Install n8n-manager globally so it can be run from anywhere",
+      "default": false,
+      "examples": [
+        "n8n-manager install",
+        "n8n-manager install --user",
+        "n8n-manager install --path /opt/bin",
+        "n8n-manager install --yes"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--record",
+          "help": "Record this command session for sharing"
+        },
+        {
+          "long": "--record-output",
+          "arg": "path",
+          "help": "Directory for session recording artifacts"
+        },
+        {
+          "long": "--path",
+          "short": "-p",
+          "arg": "dir",
+          "help": "Custom install directory (default: /usr/local/bin)"
+        },
+        {
+          "long": "--user",
+          "help": "Install to ~/.local/bin instead of /usr/local/bin (no sudo)"
+        },
+        {
+          "long": "--yes",
+          "help": "Non-interactive consent — required when stdin is non-TTY"
+        }
+      ]
+    },
+    {
+      "name": "update",
+      "full_name": "update",
+      "group": "System",
+      "help": "Check for updates and self-update n8n-manager to the latest version",
+      "default": false,
+      "examples": [
+        "n8n-manager update",
+        "n8n-manager update --check",
+        "n8n-manager update --channel dev",
+        "n8n-manager update --rollback",
+        "n8n-manager update --yes"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--record",
+          "help": "Record this command session for sharing"
+        },
+        {
+          "long": "--record-output",
+          "arg": "path",
+          "help": "Directory for session recording artifacts"
+        },
+        {
+          "long": "--check",
+          "help": "Only check for updates without installing"
+        },
+        {
+          "long": "--force",
+          "help": "Force update even if already on latest version"
+        },
+        {
+          "long": "--channel",
+          "short": "-c",
+          "arg": "channel",
+          "default": "stable",
+          "allowed": [
+            "stable",
+            "dev"
+          ],
+          "help": "Update channel (stable=releases, dev=main branch)"
+        },
+        {
+          "long": "--rollback",
+          "help": "Roll back to the prior v4 binary at the original install path (.v4.bak)"
+        },
+        {
+          "long": "--yes",
+          "help": "Non-interactive consent — required when stdin is non-TTY for update or rollback"
+        }
+      ]
+    },
+    {
+      "name": "uninstall",
+      "full_name": "uninstall",
+      "group": "System",
+      "help": "Remove n8n-manager from the system",
+      "default": false,
+      "examples": [
+        "n8n-manager uninstall"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--record",
+          "help": "Record this command session for sharing"
+        },
+        {
+          "long": "--record-output",
+          "arg": "path",
+          "help": "Directory for session recording artifacts"
+        },
+        {
+          "long": "--path",
+          "short": "-p",
+          "arg": "dir",
+          "help": "Custom install directory to remove from"
+        }
+      ]
+    },
+    {
+      "name": "decode-zws",
+      "full_name": "decode-zws",
+      "group": "System",
+      "help": "Decode a ZWS-encoded n8n-manager command blob (print only — does not execute)",
+      "default": false,
+      "examples": [
+        "n8n-manager decode-zws \"n8n-manager -- <invisible-zws-blob>\"",
+        "n8n-manager decode-zws --stdin <<< \"\\$ENCODED\""
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--stdin",
+          "help": "Read the encoded blob from stdin instead of taking it as a positional arg"
+        },
+        {
+          "long": "--raw",
+          "help": "Print only the decoded params, without the leading \"n8n-manager \" prefix"
+        }
+      ]
+    },
+    {
+      "name": "workflow",
+      "full_name": "workflow",
+      "group": "Workflow",
+      "help": "Manage n8n workflow files (.n8n)",
+      "default": false,
+      "subcommands": [
+        {
+          "name": "graph",
+          "full_name": "workflow.graph",
+          "help": "Generate Excalidraw/Mermaid dependency visualization",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow graph --workflows-dir /path/to/n8n-workflows",
+            "n8n-manager workflow graph -d ./workflows --format mermaid",
+            "n8n-manager workflow graph -d ./workflows --filter \"Sales Pipeline\"",
+            "n8n-manager workflow graph -d ./workflows --no-upload --output deps.excalidraw"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--format",
+              "short": "-f",
+              "arg": "format",
+              "default": "excalidraw",
+              "allowed": [
+                "excalidraw",
+                "mermaid"
+              ],
+              "help": "Output format (excalidraw=shareable link, mermaid=markdown)"
+            },
+            {
+              "long": "--output",
+              "short": "-o",
+              "arg": "path",
+              "help": "Output file path (default auto-generated)"
+            },
+            {
+              "long": "--filter",
+              "arg": "name",
+              "help": "Generate graph for specific workflow and its dependencies only"
+            },
+            {
+              "long": "--no-upload",
+              "help": "Skip Excalidraw upload, just save file locally"
+            },
+            {
+              "long": "--open",
+              "help": "Open shareable link in browser after generation"
+            }
+          ]
+        },
+        {
+          "name": "report",
+          "full_name": "workflow.report",
+          "help": "Analyze workflow dependencies and generate reports",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow report --workflows-dir /path/to/n8n-workflows",
+            "n8n-manager workflow report -d ./workflows --format md --output report.md",
+            "n8n-manager workflow report -d ./workflows --impact \"Sales Pipeline\"",
+            "n8n-manager workflow report -d ./workflows --orphans",
+            "n8n-manager workflow report -d ./workflows --cycles --missing"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--format",
+              "short": "-f",
+              "arg": "format",
+              "default": "console",
+              "allowed": [
+                "console",
+                "md",
+                "html"
+              ],
+              "help": "Output format (console=terminal, md=markdown file, html=HTML file)"
+            },
+            {
+              "long": "--output",
+              "short": "-o",
+              "arg": "path",
+              "help": "Output file path (required for md/html formats)"
+            },
+            {
+              "long": "--impact",
+              "arg": "name",
+              "help": "Show impact analysis for a specific workflow (name or ID)"
+            },
+            {
+              "long": "--orphans",
+              "help": "Show only orphan workflows (no connections)"
+            },
+            {
+              "long": "--cycles",
+              "help": "Show only circular dependency chains"
+            },
+            {
+              "long": "--missing",
+              "help": "Show only missing dependency references"
+            },
+            {
+              "long": "--summary",
+              "help": "Show only summary statistics"
+            }
+          ]
+        },
+        {
+          "name": "clean-pins",
+          "full_name": "workflow.clean-pins",
+          "help": "Remove pinned data from workflow files to reduce size",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow clean-pins --file ./my-workflow.n8n",
+            "n8n-manager workflow clean-pins --all --workflows-dir ./workflows",
+            "n8n-manager workflow clean-pins --all -d ./workflows --check-only",
+            "n8n-manager workflow clean-pins --select -d ./workflows --dry-run"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--file",
+              "arg": "path",
+              "help": "Clean a single .n8n file"
+            },
+            {
+              "long": "--all",
+              "help": "Clean all .n8n files in --workflows-dir"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--select",
+              "help": "Interactively select files to clean"
+            },
+            {
+              "long": "--check-only",
+              "help": "Only check for pin data without removing it"
+            }
+          ]
+        },
+        {
+          "name": "validate",
+          "full_name": "workflow.validate",
+          "help": "Validate .n8n workflow files for structural issues",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow validate --file ./my-workflow.n8n",
+            "n8n-manager workflow validate --all --workflows-dir ./workflows",
+            "n8n-manager workflow validate --all -d ./workflows --strict",
+            "n8n-manager workflow validate --select -d ./workflows"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--file",
+              "arg": "path",
+              "help": "Validate a single .n8n file"
+            },
+            {
+              "long": "--all",
+              "help": "Validate all .n8n files in --workflows-dir"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--select",
+              "help": "Interactively select files to validate"
+            },
+            {
+              "long": "--strict",
+              "help": "Treat warnings as errors"
+            },
+            {
+              "long": "--json",
+              "help": "Output results as JSON"
+            }
+          ]
+        },
+        {
+          "name": "settings",
+          "full_name": "workflow.settings",
+          "help": "View and update workflow settings (including MCP access)",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow settings --file ./my-workflow.n8n",
+            "n8n-manager workflow settings --file ./my-workflow.n8n --setting executionOrder=v1",
+            "n8n-manager workflow settings --file ./my-workflow.n8n --setting mcpEnabled=true",
+            "n8n-manager workflow settings --all -d ./workflows --setting mcpEnabled=false"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--file",
+              "arg": "path",
+              "help": "Target a single .n8n file"
+            },
+            {
+              "long": "--all",
+              "help": "Apply to all .n8n files in --workflows-dir"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--select",
+              "help": "Interactively select files"
+            },
+            {
+              "long": "--setting",
+              "short": "-s",
+              "arg": "key_value",
+              "help": "Set a setting (format: key=value, e.g. mcpEnabled=true)"
+            }
+          ]
+        },
+        {
+          "name": "publish",
+          "full_name": "workflow.publish",
+          "help": "Activate workflows (set active=true in JSON, optionally live via Docker)",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow publish --file ./my-workflow.n8n",
+            "n8n-manager workflow publish --all -d ./workflows",
+            "n8n-manager workflow publish --file ./my-workflow.n8n --live --container n8n"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--file",
+              "arg": "path",
+              "help": "Publish a single .n8n file"
+            },
+            {
+              "long": "--all",
+              "help": "Publish all .n8n files in --workflows-dir"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--select",
+              "help": "Interactively select files to publish"
+            },
+            {
+              "long": "--container",
+              "short": "-c",
+              "arg": "name",
+              "help": "Docker container for live activation"
+            },
+            {
+              "long": "--live",
+              "help": "Also activate in running n8n container (requires --container)"
+            }
+          ]
+        },
+        {
+          "name": "unpublish",
+          "full_name": "workflow.unpublish",
+          "help": "Deactivate workflows (set active=false in JSON, optionally live via Docker)",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow unpublish --file ./my-workflow.n8n",
+            "n8n-manager workflow unpublish --all -d ./workflows",
+            "n8n-manager workflow unpublish --file ./my-workflow.n8n --live --container n8n"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--file",
+              "arg": "path",
+              "help": "Unpublish a single .n8n file"
+            },
+            {
+              "long": "--all",
+              "help": "Unpublish all .n8n files in --workflows-dir"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory containing .n8n workflow files"
+            },
+            {
+              "long": "--select",
+              "help": "Interactively select files to unpublish"
+            },
+            {
+              "long": "--container",
+              "short": "-c",
+              "arg": "name",
+              "help": "Docker container for live deactivation"
+            },
+            {
+              "long": "--live",
+              "help": "Also deactivate in running n8n container (requires --container)"
+            }
+          ]
+        },
+        {
+          "name": "compare",
+          "full_name": "workflow.compare",
+          "help": "Compare two local .n8n workflow files",
+          "default": false,
+          "examples": [
+            "n8n-manager workflow compare --file-a ./v1.n8n --file-b ./v2.n8n",
+            "n8n-manager workflow compare --select -d ./workflows"
+          ],
+          "flags": [
+            {
+              "long": "--verbose",
+              "help": "Enable detailed debug logging"
+            },
+            {
+              "long": "--dry-run",
+              "help": "Simulate without making changes"
+            },
+            {
+              "long": "--log-file",
+              "arg": "path",
+              "help": "Append logs to file"
+            },
+            {
+              "long": "--config",
+              "arg": "path",
+              "help": "Custom configuration file path"
+            },
+            {
+              "long": "--trace",
+              "help": "Enable bash trace debugging"
+            },
+            {
+              "long": "--record",
+              "help": "Record this command session for sharing"
+            },
+            {
+              "long": "--record-output",
+              "arg": "path",
+              "help": "Directory for session recording artifacts"
+            },
+            {
+              "long": "--file-a",
+              "short": "-a",
+              "arg": "path",
+              "help": "First .n8n file (base)"
+            },
+            {
+              "long": "--file-b",
+              "short": "-b",
+              "arg": "path",
+              "help": "Second .n8n file (target)"
+            },
+            {
+              "long": "--select",
+              "help": "Interactively select files to compare"
+            },
+            {
+              "long": "--workflows-dir",
+              "short": "-d",
+              "arg": "path",
+              "help": "Path to directory for interactive file selection"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "migrate",
+      "full_name": "migrate",
+      "group": "Migration",
+      "help": "Convert a v4-shape backup repo to v5 canonical layout",
+      "default": false,
+      "examples": [
+        "n8n-manager migrate --source /path/to/v4-repo",
+        "n8n-manager migrate --source /path/to/v4-repo --target /path/to/output-dir",
+        "n8n-manager migrate --source /path/to/v4-repo --dry-run",
+        "n8n-manager migrate --source /path/to/v4-repo --report-only --format markdown",
+        "n8n-manager migrate --source /path/to/v4-repo --resume"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Simulate without making changes (implies --report-only)"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--source",
+          "arg": "path",
+          "required": true,
+          "help": "Path to local v4 backup repo to migrate (must be a git repo)"
+        },
+        {
+          "long": "--target",
+          "arg": "dir",
+          "help": "Write migrated canonical layout to a separate output directory (creates new git repo; mutually exclusive with sibling-branch default)"
+        },
+        {
+          "long": "--branch",
+          "arg": "name",
+          "help": "Override the auto-generated sibling-branch name (default: migrated-canonical-YYYY-MM-DD-HHMMSS)"
+        },
+        {
+          "long": "--report-only",
+          "help": "Print migration audit summary without writing any files"
+        },
+        {
+          "long": "--format",
+          "arg": "fmt",
+          "default": "text",
+          "allowed": [
+            "text",
+            "markdown"
+          ],
+          "help": "Output format for --report-only (text or markdown)"
+        },
+        {
+          "long": "--allow-dirty",
+          "help": "Skip the git working tree clean pre-flight check (use with caution)"
+        },
+        {
+          "long": "--resume",
+          "help": "Retry from an existing interrupted migrate staging dir"
+        },
+        {
+          "long": "--restart",
+          "help": "Delete interrupted staging dir and start fresh (mutually exclusive with --resume)"
+        }
+      ],
+      "required_flags": [
+        "--source"
+      ]
+    },
+    {
+      "name": "migrate-config",
+      "full_name": "migrate-config",
+      "group": "Migration",
+      "help": "Translate a v4 n8n-manager config file to v5 format (atomic, idempotent)",
+      "default": false,
+      "examples": [
+        "n8n-manager migrate-config",
+        "n8n-manager migrate-config --dry-run",
+        "n8n-manager migrate-config --config /custom/path/to/config",
+        "n8n-manager migrate-config --restore-from-bak"
+      ],
+      "flags": [
+        {
+          "long": "--verbose",
+          "help": "Enable detailed debug logging"
+        },
+        {
+          "long": "--dry-run",
+          "help": "Print the proposed rewrite to stdout without touching disk"
+        },
+        {
+          "long": "--log-file",
+          "arg": "path",
+          "help": "Append logs to file"
+        },
+        {
+          "long": "--config",
+          "arg": "path",
+          "help": "Custom configuration file path"
+        },
+        {
+          "long": "--trace",
+          "help": "Enable bash trace debugging"
+        },
+        {
+          "long": "--restore-from-bak",
+          "help": "Atomically swap .v4.bak back into the original config path (refuses if .v4.bak is absent)"
+        }
+      ]
+    }
+  ],
+  "config_file": {
+    "path_default": "${XDG_CONFIG_HOME:-~/.config}/n8n-manager/config",
+    "path_override": "--config <path>",
+    "permissions_required": "0600 (file holds CONF_GITHUB_TOKEN / CONF_N8N_API_KEY)",
+    "keys": [
+      "CONF_BACKUP_LAYOUT",
+      "CONF_BACKUP_TYPE",
+      "CONF_CONTAINER",
+      "CONF_CREDENTIAL_EXPORT_MODE",
+      "CONF_GITHUB_BRANCH",
+      "CONF_GITHUB_REPO",
+      "CONF_GITHUB_TOKEN",
+      "CONF_LOG_FILE",
+      "CONF_N8N_API_KEY",
+      "CONF_N8N_API_URL",
+      "CONF_RECORD",
+      "CONF_RECORD_OUTPUT",
+      "CONF_RESTORE_TYPE",
+      "CONF_SEPARATE_FILES",
+      "CONF_VERBOSE",
+      "CONF_WORKFLOWS_DIR"
+    ]
+  },
+  "pat_input_methods": [
+    {
+      "method": "stdin",
+      "flag": "--token-stdin",
+      "frontend_default": true,
+      "description": "Read PAT from stdin. PAT never appears in the generated command string, /proc/<pid>/cmdline, or shell history.",
+      "example_template": "echo \"$N8N_PAT\" | n8n-manager backup --token-stdin -c <container> -r <owner/repo>"
+    },
+    {
+      "method": "file",
+      "flag": "--token-file",
+      "arg": "path",
+      "frontend_default": false,
+      "description": "Read PAT from a file. File must be chmod 600 — refused otherwise. Recommended for cron / systemd.",
+      "example_template": "n8n-manager backup --token-file /etc/n8n-manager/pat -c <container> -r <owner/repo>"
+    },
+    {
+      "method": "inline",
+      "flag": "--token",
+      "short": "-t",
+      "arg": "pat",
+      "frontend_default": false,
+      "warning": "PAT lands in shell history and `ps -ef`. Acceptable on personal workstations only.",
+      "example_template": "n8n-manager backup -t <ghp_xxx> -c <container> -r <owner/repo>"
+    }
+  ],
+  "compatibility_constraints": [
+    {
+      "rule": "enterprise-requires-canonical",
+      "command": "backup",
+      "when": {
+        "--backup-type": "enterprise"
+      },
+      "requires": {
+        "--backup-layout": "canonical"
+      },
+      "message": "--backup-type enterprise requires --backup-layout canonical"
+    },
+    {
+      "rule": "full-db-requires-canonical",
+      "command": "backup",
+      "when": {
+        "--backup-type": "full-db"
+      },
+      "requires": {
+        "--backup-layout": "canonical"
+      },
+      "message": "--backup-type full-db requires --backup-layout canonical"
+    },
+    {
+      "rule": "incremental-requires-canonical",
+      "command": "backup",
+      "when": {
+        "--incremental": true
+      },
+      "requires": {
+        "--backup-layout": "canonical"
+      },
+      "message": "--incremental requires --backup-layout canonical"
+    },
+    {
+      "rule": "delete-missing-requires-force",
+      "command": "restore",
+      "when": {
+        "--delete-missing": true
+      },
+      "requires": {
+        "--force": true
+      },
+      "message": "--delete-missing requires --force"
+    },
+    {
+      "rule": "live-requires-container",
+      "command": [
+        "workflow.publish",
+        "workflow.unpublish"
+      ],
+      "when": {
+        "--live": true
+      },
+      "requires_any": [
+        "--container"
+      ],
+      "message": "--live requires --container"
+    },
+    {
+      "rule": "migrate-restart-vs-resume",
+      "command": "migrate",
+      "mutually_exclusive": [
+        "--restart",
+        "--resume"
+      ],
+      "message": "--restart and --resume are mutually exclusive"
+    },
+    {
+      "rule": "migrate-target-vs-branch",
+      "command": "migrate",
+      "mutually_exclusive": [
+        "--target",
+        "--branch"
+      ],
+      "message": "--target writes to a separate dir; --branch overrides the sibling-branch name. Pick one."
+    },
+    {
+      "rule": "compare-files-or-select",
+      "command": "workflow.compare",
+      "exactly_one_of": [
+        {
+          "--file-a": "set",
+          "--file-b": "set"
+        },
+        {
+          "--select": true
+        }
+      ],
+      "message": "Provide both --file-a and --file-b, or use --select"
+    },
+    {
+      "rule": "danger-decrypted-credentials",
+      "command": "backup",
+      "when": {
+        "--credential-export-mode": "decrypted"
+      },
+      "warning": "Plaintext credentials in the output. Use private repos only and only when you understand the secret-handling implications."
+    },
+    {
+      "rule": "danger-unsafe-decrypted-credentials",
+      "command": [
+        "restore",
+        "import-url"
+      ],
+      "when": {
+        "--unsafe-decrypted-credentials": true
+      },
+      "warning": "Allows plaintext credential export during pre-restore snapshot. Files written umask 077 and shredded on cleanup."
+    },
+    {
+      "rule": "danger-allow-schema-drift",
+      "command": [
+        "restore",
+        "import-url"
+      ],
+      "when": {
+        "--allow-schema-drift": true
+      },
+      "warning": "May corrupt data when n8n migrations-table hash diverges from the pinned set."
+    },
+    {
+      "rule": "danger-legacy-fallback",
+      "command": [
+        "restore",
+        "import-url"
+      ],
+      "when": {
+        "--legacy-fallback": true
+      },
+      "warning": "Skips the v4-shape adapter. Reduced validation. Emergency-restore semantics."
+    }
+  ],
+  "frontend_builder_hints": {
+    "non_renderable_commands": [
+      "welcome"
+    ],
+    "default_pat_method": "stdin",
+    "version_banner_source": "src/initialize.sh:VERSION",
+    "deep_human_reference": "docs/cli-reference.md"
+  }
+}
