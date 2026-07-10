@@ -16988,7 +16988,7 @@ EOF
               "Check for updates" \
               "Show all commands and flags" \
               "Exit" \
-          || true
+          2>/dev/null || true
       )
       case "$choice" in
           "Backup n8n data")              exec "$0" backup ;;
