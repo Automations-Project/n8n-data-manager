@@ -8992,7 +8992,11 @@ create_pre_restore_backup() {
     if [ "$is_dry_run" != "true" ] && [ "$is_dry_run" != "1" ]; then
         if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
             log DEBUG "[PRE_RESTORE_BACKUP] Exporting current workflows for safety backup"
-            if ! dockExec "$container" "n8n export:workflow --all --output=$container_pre_workflows"; then
+            # >&2: the export CLI prints status ("No workflows found" on an empty
+            # instance) to stdout; this function returns the backup dir via stdout,
+            # so any leaked export output would corrupt the returned path. Send the
+            # command's stdout to stderr — data goes to --output=<file>, not stdout.
+            if ! dockExec "$container" "n8n export:workflow --all --output=$container_pre_workflows" >&2; then
                 log WARN "[PRE_RESTORE_BACKUP] Failed to export current workflows (may be empty)"
                 no_existing_data=true
             else
@@ -9005,7 +9009,9 @@ create_pre_restore_backup() {
 
         if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
             log DEBUG "[PRE_RESTORE_BACKUP] Exporting current credentials for safety backup"
-            if ! dockExec "$container" "n8n export:credentials --all --decrypted --output=$container_pre_credentials"; then
+            # >&2: see the workflow export above — keep the command's stdout out of
+            # this function's stdout (which returns the backup dir path).
+            if ! dockExec "$container" "n8n export:credentials --all --decrypted --output=$container_pre_credentials" >&2; then
                 log WARN "[PRE_RESTORE_BACKUP] Failed to export current credentials (may be empty)"
                 no_existing_data=true
             else
