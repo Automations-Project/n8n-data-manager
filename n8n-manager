@@ -3074,13 +3074,27 @@ db_sqlite_apply_metadata() {
     fi
 
     if [ "$is_dry_run" != "true" ] && [ "$is_dry_run" != "1" ]; then
+        # Capture the DB file's current ownership BEFORE overwriting it. `docker cp`
+        # into a container writes the file as root (uid 0), but n8n runs as the
+        # `node` user (uid 1000) and cannot open a root-owned database.sqlite — on
+        # the next `docker start` it fails to open its DB and the container exits
+        # within seconds. Re-apply the original ownership after the copy via the
+        # same --volumes-from alpine helper used for WAL clearing (the container is
+        # stopped here, so `docker exec` is unavailable).
+        local db_owner
+        db_owner=$(docker run --rm --volumes-from "$container" alpine sh -lc \
+            "stat -c '%u:%g' '$sqlite_path' 2>/dev/null" 2>/dev/null | tr -d '\r\n')
+        [ -n "$db_owner" ] || db_owner="1000:1000"   # n8n images run as uid 1000 (node)
         _db_sqlite_clear_wal_files "$container"
         if ! docker cp "$tmp/$db_name" "$container:$sqlite_path" 2>/dev/null; then
             log ERROR "[DB-SQLITE] failed to write updated sqlite db back to container"
             rm -rf "$tmp"
             return 1
         fi
-        log INFO "[DB-SQLITE] metadata changes written to sqlite database"
+        docker run --rm --volumes-from "$container" alpine sh -lc \
+            "chown '$db_owner' '$sqlite_path'" >/dev/null 2>&1 \
+            || log WARN "[DB-SQLITE] could not restore sqlite ownership to $db_owner (n8n may fail to start)"
+        log INFO "[DB-SQLITE] metadata changes written to sqlite database (owner $db_owner)"
     fi
 
     rm -rf "$tmp"
@@ -12028,21 +12042,21 @@ EOF
     return 0
 }
 
-# Poll until n8n's CLI can run export-class commands again after a restart,
-# bounded by SC_IMPORT_READY_TIMEOUT (default 60s). Uses `n8n export:workflow
-# --help` — the SAME lightweight check the runtime probe uses to decide export
-# support (n8n_runtime_probe.sh:_n8n_probe_command_supported). `n8n --version`
-# is too weak: it succeeds mid-boot, before the export/import CLI has finished
-# loading, so gating on it lets restore return while a follow-up backup's probe
-# would still see the export command as "unavailable" (F6). `--help` has no DB
-# access and no side effects, so it will not touch the just-restored data.
+# Poll until n8n is actually ready again after the metadata-phase restart,
+# bounded by SC_IMPORT_READY_TIMEOUT (default 90s). Uses n8n's HTTP health
+# endpoint, which returns 200 only once the server has finished booting
+# (migrations applied, DB connected) — the real signal that the export/import
+# CLI the next operation relies on will work. `n8n export:workflow --help` is NOT
+# a readiness signal: oclif prints help without booting n8n, so it returns 0 the
+# instant the container can exec, long before n8n is up (F6). wget is present in
+# both alpine (busybox) and debian n8n images; the in-container port is 5678.
 _sc_import_wait_cli_ready() {
     local container="$1"
-    local timeout="${SC_IMPORT_READY_TIMEOUT:-60}"
+    local timeout="${SC_IMPORT_READY_TIMEOUT:-90}"
     local elapsed=0
     while [ "$elapsed" -lt "$timeout" ]; do
-        if dockExecLogin "$container" "n8n export:workflow --help >/dev/null 2>&1"; then
-            log INFO "[SC-IMPORT] n8n CLI ready ${elapsed}s after metadata restart"
+        if dockExec "$container" "wget -q -O /dev/null http://127.0.0.1:5678/healthz/readiness 2>/dev/null || wget -q -O /dev/null http://127.0.0.1:5678/healthz 2>/dev/null"; then
+            log INFO "[SC-IMPORT] n8n ready ${elapsed}s after metadata restart"
             return 0
         fi
         sleep 2
