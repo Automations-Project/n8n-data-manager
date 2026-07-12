@@ -7327,14 +7327,30 @@ perform_import() {
     local pre_restore_dir="${5:-}"
 
     if declare -F sc_import_dispatch >/dev/null 2>&1; then
-        if sc_import_dispatch "$container" "$backup_source_dir" "$restore_type" "$is_dry_run" "$pre_restore_dir"; then
+        local dispatch_rc=0
+        sc_import_dispatch "$container" "$backup_source_dir" "$restore_type" "$is_dry_run" "$pre_restore_dir" || dispatch_rc=$?
+        if [ "$dispatch_rc" -eq 0 ]; then
             return 0
         fi
 
-        local dispatch_rc=$?
-        log DEBUG "[PERFORM_IMPORT] dispatcher failed (rc=$dispatch_rc); trying legacy importer"
+        # F8: the dispatcher already detected the layout and routed to the correct
+        # importer — including its own legacy/adapter routing and the explicit
+        # --legacy-fallback / --accept-legacy-partial opt-in gates (D-14 "silent
+        # fallthrough is gone; opt-in only"). A non-zero rc here is therefore a REAL
+        # restore failure (or a deliberate "opt-in required" error), NOT a "try
+        # something else" signal. Silently retrying with perform_import_legacy masked
+        # that failure as success (the caller then printed "Restore completed
+        # successfully!" and skipped rollback) and undermined the opt-in gate. Propagate
+        # the failure so the caller reports it and runs its pre-restore rollback. The
+        # legacy importer below runs ONLY when the dispatcher is unavailable (a minimal
+        # build without source_control_import.sh).
+        log ERROR "[PERFORM_IMPORT] restore failed (rc=$dispatch_rc); not silently falling back to the legacy importer."
+        log ERROR "  If this source is a pre-v5 (legacy) backup, re-run with --legacy-fallback; otherwise address the errors above."
+        return "$dispatch_rc"
     fi
 
+    # Dispatcher unavailable (minimal build) — use the legacy importer directly.
+    log DEBUG "[PERFORM_IMPORT] sc_import_dispatch unavailable; using the legacy importer directly"
     perform_import_legacy "$container" "$backup_source_dir" "$restore_type" "$is_dry_run" "$pre_restore_dir"
 }
 
@@ -12476,6 +12492,8 @@ sc_import_dispatch() {
             ;;
         full-db)
             log INFO "[SC-IMPORT] full-db layout detected"
+            # F9: full-db import replays encryption-key-bound data (credentials + userManagement settings).
+            log WARN "Full-db restore requires this container's N8N_ENCRYPTION_KEY to match the source instance that produced the backup; a mismatch fails with 'bad decrypt'."
             perform_import_legacy "$container" "$source_dir" "$restore_type" "$is_dry_run" "$pre_restore_dir"
             return $?
             ;;
@@ -17364,6 +17382,10 @@ n8n_manager_backup_command() {
           exit 1
       fi
 
+      # F9: full-db captures the ENTIRE database, including encryption-key-bound data.
+      log WARN "Full-db backup captures the ENTIRE database, including encryption-key-bound data (credentials and userManagement settings)."
+      log WARN "Restoring it REQUIRES the target n8n to use the SAME N8N_ENCRYPTION_KEY as this instance — otherwise restore fails with 'bad decrypt'."
+
       screen_completion "backup" "$ARG_CONTAINER" "$ARG_REPO" "$ARG_BRANCH" \
           "Type|full-db" "Status|Complete ✔" "Timestamp|$(date '+%Y-%m-%d %H:%M:%S')"
       cleanup_one_time
@@ -17701,6 +17723,10 @@ n8n_manager_restore_command() {
           rm -rf "$download_dir"
           exit 1
       fi
+
+      # F9: full-db import replays encryption-key-bound data (credentials + userManagement settings).
+      log WARN "Full-db restore requires this container's N8N_ENCRYPTION_KEY to match the source instance that produced the backup."
+      log WARN "If the keys differ, the import will fail with 'bad decrypt' and abort. This tool does not transfer the source key."
 
       if ! import_full_database "$ARG_CONTAINER" "$fulldb_dir" "$is_dry_run" "true"; then
           rm -rf "$download_dir"
