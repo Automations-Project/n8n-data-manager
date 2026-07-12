@@ -3075,17 +3075,21 @@ db_sqlite_apply_metadata() {
 
     if [ "$is_dry_run" != "true" ] && [ "$is_dry_run" != "1" ]; then
         _db_sqlite_clear_wal_files "$container"
-        # `docker cp` into the container writes the file with the HOST source file's
-        # uid/gid (the user running this tool, e.g. CI uid 1001) and mode — NOT
-        # n8n's `node` user (uid 1000). n8n then opens its DB read-only and crashes
-        # on the first write with "SQLITE_READONLY: attempt to write a readonly
-        # database", exiting on every boot (F6). /home/node/.n8n is the container's
-        # writable layer, not a volume, so neither `docker exec` (container is
-        # stopped) nor `--volumes-from` can fix ownership. Instead make the file
-        # world-writable before the copy: docker cp preserves the mode, so `node`
-        # (as "other") can read AND write it. chmod needs no root — unlike chown —
-        # so this works regardless of which host user runs the tool.
-        chmod 666 "$tmp/$db_name" 2>/dev/null || true
+        # `docker cp` into the container preserves the HOST source file's uid/gid,
+        # which is the user running this tool (e.g. CI uid 1001) — NOT n8n's `node`
+        # user (uid 1000). n8n then cannot write its own DB and crashes on the first
+        # write with "SQLITE_READONLY: attempt to write a readonly database",
+        # exiting on every boot (F6). /home/node/.n8n is the container writable
+        # layer (no volume), so neither `docker exec` (container is stopped) nor
+        # `--volumes-from` can fix this afterwards. Instead re-own the host temp copy
+        # to node (1000:1000) via the docker daemon (root) BEFORE copying it in,
+        # keeping mode 0644 — owner(node) read+write, no world-write. This matches
+        # n8n's own default DB permissions and needs no host root (unlike a host
+        # chown); mode stays world-readable so the (non-root) docker cp client can
+        # still read the source file.
+        chmod 644 "$tmp/$db_name" 2>/dev/null || true
+        docker run --rm -v "$tmp:/w" alpine chown 1000:1000 "/w/$db_name" >/dev/null 2>&1 \
+            || log WARN "[DB-SQLITE] could not set sqlite owner to node (1000:1000); n8n may fail to start"
         if ! docker cp "$tmp/$db_name" "$container:$sqlite_path" 2>/dev/null; then
             log ERROR "[DB-SQLITE] failed to write updated sqlite db back to container"
             rm -rf "$tmp"
