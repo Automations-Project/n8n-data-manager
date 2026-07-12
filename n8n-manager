@@ -2150,7 +2150,17 @@ if delete_missing and want_folders:
 
 for o in ownp.get("workflowOwners", []):
     if not o.get("workflowId") or not o.get("projectId"): continue
-    print(f"INSERT INTO shared_workflow (\"workflowId\",\"projectId\",role,\"createdAt\",\"updatedAt\") VALUES ({q(o['workflowId'])},{q(o['projectId'])},{q(o.get('role') or 'workflow:owner')},NOW(),NOW()) ON CONFLICT (\"workflowId\",\"projectId\") DO UPDATE SET role=EXCLUDED.role,\"updatedAt\"=NOW();")
+    # FK-safe insert (postgres analog of the sqlite-engine tolerance). The exported
+    # workflow_owners.json can reference a *personal* project, but db_pg_export_metadata
+    # only writes team (type='team') projects to projects/*.json — so a personal
+    # projectId is never re-created on restore. Postgres enforces the shared_workflow
+    # FKs (projectId -> project.id, workflowId -> workflow_entity.id) and aborts the
+    # whole BEGIN..COMMIT on a dangling reference; SQLite ships with foreign_keys OFF,
+    # so the same row inserts silently there (why the sqlite axis is green). Guard the
+    # insert with EXISTS on both parents so a dangling owner row is skipped instead of
+    # failing the entire metadata apply. The workflow keeps the owner n8n assigned it
+    # at import time, which is the correct functional outcome.
+    print(f"INSERT INTO shared_workflow (\"workflowId\",\"projectId\",role,\"createdAt\",\"updatedAt\") SELECT {q(o['workflowId'])},{q(o['projectId'])},{q(o.get('role') or 'workflow:owner')},NOW(),NOW() WHERE EXISTS (SELECT 1 FROM project WHERE id={q(o['projectId'])}) AND EXISTS (SELECT 1 FROM workflow_entity WHERE id={q(o['workflowId'])}) ON CONFLICT (\"workflowId\",\"projectId\") DO UPDATE SET role=EXCLUDED.role,\"updatedAt\"=NOW();")
 
 want_dt = []
 for t in dtables:
