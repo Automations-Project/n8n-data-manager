@@ -7339,7 +7339,10 @@ perform_import_legacy() {
     local has_workflows_dir=false
     local has_credentials_dir=false
     [ -d "$backup_source_dir/workflows" ] && has_workflows_dir=true
-    [ -d "$backup_source_dir/credentials" ] && has_credentials_dir=true
+    # F3: a canonical backup may ship credential_stubs/ (redacted secrets) instead
+    # of a full credentials/ dir. n8n import:credentials accepts stub data (empty
+    # secret values) and re-encrypts it, so a stub-only backup is restorable.
+    { [ -d "$backup_source_dir/credentials" ] || [ -d "$backup_source_dir/credential_stubs" ]; } && has_credentials_dir=true
 
     # If user explicitly requested --separate-files, enforce separate mode
     if [ "${ARG_SEPARATE_FILES:-}" = "true" ] || [ "${ARG_SEPARATE_FILES:-}" = "1" ]; then
@@ -7509,11 +7512,18 @@ _discover_separate_files() {
 
     if [[ "$restore_type" == "credentials" || "$restore_type" == "all" ]]; then
         if [ "$has_credentials_dir" = "true" ]; then
+            # F3: prefer full credentials/; fall back to redacted credential_stubs/.
+            local cred_src="$backup_source_dir/credentials"
+            [ -d "$cred_src" ] || cred_src="$backup_source_dir/credential_stubs"
             local cred_count
-            cred_count=$(find "$backup_source_dir/credentials" -name "*.json" -type f | wc -l)
+            cred_count=$(find "$cred_src" -name "*.json" -type f | wc -l)
             if [ "$cred_count" -gt 0 ]; then
-                repo_credentials="$backup_source_dir/credentials"
-                log SUCCESS "Found credentials directory with $cred_count files"
+                repo_credentials="$cred_src"
+                if [ "$cred_src" = "$backup_source_dir/credential_stubs" ]; then
+                    log WARN "Restoring from credential STUBS ($cred_count) — secret values are redacted; imported credentials will need their secrets re-entered."
+                else
+                    log SUCCESS "Found credentials directory with $cred_count files"
+                fi
             else
                 log WARN "Credentials directory is empty"
             fi
@@ -8893,26 +8903,28 @@ rollback_restore() {
     local container_workflows="/tmp/rollback_workflows.json"
     local container_credentials="/tmp/rollback_credentials.json"
     local rollback_success=true
+    local have_wf=false have_cred=false
 
-    # Validate backup files exist
+    # Detect which pre-restore backups exist. A missing file means the instance
+    # had no data of that kind before the restore (e.g. a fresh/empty n8n) — a
+    # valid "nothing to roll back" state (F4), not an error.
     if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
-        if [ ! -f "$backup_workflows" ]; then
-            log ERROR "Pre-restore backup file workflows.json not found in $backup_dir. Cannot rollback workflows."
-            rollback_success=false
-        fi
+        if [ -f "$backup_workflows" ]; then have_wf=true
+        else log WARN "No pre-restore workflows to roll back (instance had none before restore)."; fi
     fi
     if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
-        if [ ! -f "$backup_credentials" ]; then
-            log ERROR "Pre-restore backup file credentials.json not found in $backup_dir. Cannot rollback credentials."
-            rollback_success=false
-        fi
+        if [ -f "$backup_credentials" ]; then have_cred=true
+        else log WARN "No pre-restore credentials to roll back (instance had none before restore)."; fi
     fi
-    if ! $rollback_success; then return 1; fi
+    if ! $have_wf && ! $have_cred; then
+        log INFO "Nothing to roll back — the instance was empty before the restore attempt."
+        return 0
+    fi
 
     # Copy pre-restore backup files back to container
     log INFO "Copying pre-restore backup files back to container..."
     local copy_failed=false
-    if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
+    if $have_wf; then
         if [ "$is_dry_run" = "true" ] || [ "$is_dry_run" = "1" ]; then
             log DRYRUN "Would copy $backup_workflows to ${container_id}:${container_workflows}"
         elif ! docker cp "$backup_workflows" "${container_id}:${container_workflows}"; then
@@ -8920,7 +8932,7 @@ rollback_restore() {
             copy_failed=true
         fi
     fi
-    if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
+    if $have_cred; then
         if [ "$is_dry_run" = "true" ] || [ "$is_dry_run" = "1" ]; then
             log DRYRUN "Would copy $backup_credentials to ${container_id}:${container_credentials}"
         elif ! docker cp "$backup_credentials" "${container_id}:${container_credentials}"; then
@@ -8935,13 +8947,13 @@ rollback_restore() {
 
     # Import pre-restore data back into n8n
     log INFO "Importing pre-restore backup data into n8n..."
-    if [[ "$restore_type" == "all" || "$restore_type" == "workflows" ]]; then
+    if $have_wf; then
         if ! dockExec "$container_id" "n8n import:workflow --separate --input=$container_workflows"; then
             log ERROR "Rollback failed during workflow import."
             rollback_success=false
         fi
     fi
-    if [[ "$restore_type" == "all" || "$restore_type" == "credentials" ]]; then
+    if $have_cred; then
         if ! dockExec "$container_id" "n8n import:credentials --separate --input=$container_credentials"; then
             log ERROR "Rollback failed during credential import."
             rollback_success=false
