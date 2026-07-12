@@ -3074,27 +3074,24 @@ db_sqlite_apply_metadata() {
     fi
 
     if [ "$is_dry_run" != "true" ] && [ "$is_dry_run" != "1" ]; then
-        # Capture the DB file's current ownership BEFORE overwriting it. `docker cp`
-        # into a container writes the file as root (uid 0), but n8n runs as the
-        # `node` user (uid 1000) and cannot open a root-owned database.sqlite — on
-        # the next `docker start` it fails to open its DB and the container exits
-        # within seconds. Re-apply the original ownership after the copy via the
-        # same --volumes-from alpine helper used for WAL clearing (the container is
-        # stopped here, so `docker exec` is unavailable).
-        local db_owner
-        db_owner=$(docker run --rm --volumes-from "$container" alpine sh -lc \
-            "stat -c '%u:%g' '$sqlite_path' 2>/dev/null" 2>/dev/null | tr -d '\r\n')
-        [ -n "$db_owner" ] || db_owner="1000:1000"   # n8n images run as uid 1000 (node)
         _db_sqlite_clear_wal_files "$container"
+        # `docker cp` into the container writes the file with the HOST source file's
+        # uid/gid (the user running this tool, e.g. CI uid 1001) and mode — NOT
+        # n8n's `node` user (uid 1000). n8n then opens its DB read-only and crashes
+        # on the first write with "SQLITE_READONLY: attempt to write a readonly
+        # database", exiting on every boot (F6). /home/node/.n8n is the container's
+        # writable layer, not a volume, so neither `docker exec` (container is
+        # stopped) nor `--volumes-from` can fix ownership. Instead make the file
+        # world-writable before the copy: docker cp preserves the mode, so `node`
+        # (as "other") can read AND write it. chmod needs no root — unlike chown —
+        # so this works regardless of which host user runs the tool.
+        chmod 666 "$tmp/$db_name" 2>/dev/null || true
         if ! docker cp "$tmp/$db_name" "$container:$sqlite_path" 2>/dev/null; then
             log ERROR "[DB-SQLITE] failed to write updated sqlite db back to container"
             rm -rf "$tmp"
             return 1
         fi
-        docker run --rm --volumes-from "$container" alpine sh -lc \
-            "chown '$db_owner' '$sqlite_path'" >/dev/null 2>&1 \
-            || log WARN "[DB-SQLITE] could not restore sqlite ownership to $db_owner (n8n may fail to start)"
-        log INFO "[DB-SQLITE] metadata changes written to sqlite database (owner $db_owner)"
+        log INFO "[DB-SQLITE] metadata changes written to sqlite database"
     fi
 
     rm -rf "$tmp"
