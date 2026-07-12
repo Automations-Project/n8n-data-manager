@@ -12028,6 +12028,28 @@ EOF
     return 0
 }
 
+# Poll until n8n's CLI can run export-class commands again after a restart,
+# bounded by SC_IMPORT_READY_TIMEOUT (default 60s). Uses `n8n export:workflow
+# --help` — the SAME lightweight check the runtime probe uses to decide export
+# support (n8n_runtime_probe.sh:_n8n_probe_command_supported). `n8n --version`
+# is too weak: it succeeds mid-boot, before the export/import CLI has finished
+# loading, so gating on it lets restore return while a follow-up backup's probe
+# would still see the export command as "unavailable" (F6). `--help` has no DB
+# access and no side effects, so it will not touch the just-restored data.
+_sc_import_wait_cli_ready() {
+    local container="$1"
+    local timeout="${SC_IMPORT_READY_TIMEOUT:-60}"
+    local elapsed=0
+    while [ "$elapsed" -lt "$timeout" ]; do
+        if dockExecLogin "$container" "n8n export:workflow --help >/dev/null 2>&1"; then
+            return 0
+        fi
+        sleep 2
+        elapsed=$((elapsed + 2))
+    done
+    return 1
+}
+
 _sc_import_metadata_offline() {
     local container="$1"
     local source_dir="$2"
@@ -12077,9 +12099,14 @@ _sc_import_metadata_offline() {
         return 1
     fi
 
-    # Verification pass — uses dockExec (sh -c sufficient; n8n --version is a read-only probe)
-    if ! dockExec "$container" "n8n --version >/dev/null 2>&1"; then
-        log WARN "[SC-IMPORT] post-restore verification failed"
+    # Wait for n8n to be usable again before returning success. The container has
+    # only just been `docker start`ed; `n8n --version` works immediately but the
+    # export/import CLI the NEXT operation relies on (e.g. a follow-up backup's
+    # runtime probe) is not ready until n8n has finished loading. Gate restore's
+    # success on the real readiness signal so "restore succeeded" means "n8n is up
+    # and usable", not merely "the container started" (F6).
+    if ! _sc_import_wait_cli_ready "$container"; then
+        log WARN "[SC-IMPORT] n8n did not become ready within ${SC_IMPORT_READY_TIMEOUT:-60}s after the metadata restart; a follow-up operation may see reduced capabilities"
     fi
 
     return 0
