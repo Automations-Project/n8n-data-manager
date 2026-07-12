@@ -12042,6 +12042,7 @@ _sc_import_wait_cli_ready() {
     local elapsed=0
     while [ "$elapsed" -lt "$timeout" ]; do
         if dockExecLogin "$container" "n8n export:workflow --help >/dev/null 2>&1"; then
+            log INFO "[SC-IMPORT] n8n CLI ready ${elapsed}s after metadata restart"
             return 0
         fi
         sleep 2
