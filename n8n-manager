@@ -12419,7 +12419,15 @@ _sc_import_via_v4_adapter() {
         return 1
     }
     # Project cleanup policy + D-08: trap on every exit path including signals (EXIT SIGINT SIGTERM).
-    trap 'rm -rf "$v4_stage" 2>/dev/null || true' EXIT SIGINT SIGTERM
+    # F11: expand ${v4_stage:-}, NOT $v4_stage. This EXIT trap is global and outlives
+    # the function — it fires at PARENT-script exit, by which point v4_stage (a local)
+    # is out of scope. Under `set -u` a bare $v4_stage there raises "unbound variable",
+    # which corrupts the command's exit status to 1 AFTER a successful import. This was
+    # masked on the sqlite axis (the sqlite engine sets its own EXIT trap that overwrites
+    # this one) but surfaced on postgres (db_fallback_postgres.sh sets no trap), failing
+    # legacy/v4 restores despite the import succeeding. ${v4_stage:-} makes the stale
+    # trap a harmless no-op; in-scope signal cleanup during the function is unaffected.
+    trap 'rm -rf "${v4_stage:-}" 2>/dev/null || true' EXIT SIGINT SIGTERM
 
     if ! v4_adapter_to_canonical_staging "$source_dir" "$v4_stage"; then
         log ERROR "v4 adapter failed on $source_dir."
@@ -20281,8 +20289,15 @@ n8n_manager_workflow_compare_command() {
   echo "" >&2
 
   local diff_output
-  diff_output=$(wf_compare_files "$ARG_FILE_A" "$ARG_FILE_B")
-  local exit_code=$?
+  # wf_compare_files returns 1 when differences are found and 2 on read/parse
+  # error (see src/lib/wf_compare.sh). Under `set -Eeuo pipefail` a bare
+  # `diff_output=$(...)` assignment aborts this whole command the moment the
+  # substitution exits non-zero, so for two workflows that actually differ the
+  # diff-display and summary below were unreachable — the command exited 1 with
+  # only the header printed. Capture the status via `|| exit_code=$?` so errexit
+  # is suppressed for this command and the real code is preserved. (live finding F10)
+  local exit_code=0
+  diff_output=$(wf_compare_files "$ARG_FILE_A" "$ARG_FILE_B") || exit_code=$?
 
   if [ $exit_code -eq 2 ]; then
       log ERROR "Comparison failed — check file format"
